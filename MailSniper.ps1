@@ -13,7 +13,7 @@ Optional Dependencies: None
 
 .DESCRIPTION
 
-This module will connect to a Microsoft Exchange server and grant the "ApplicationImpersonation" role to a specified user. Having the "ApplicationImpersonation" role allows that user to search through other domain user's mailboxes. After this role has been granted the Invoke-GlobalSearchFunction creates a list of all mailboxes in the Exchange database. The module then connects to Exchange Web Services using the impersonation role to gather a number of emails from each mailbox, and ultimately searches through them for specific terms.
+This module will connect to a Microsoft Exchange server and grant the "ApplicationImpersonation" role to a specified user. Having the "ApplicationImpersonation" role allows that user to search through other domain user's mailboxes. After this role has been granted the Invoke-GlobalMailSearch function creates a list of all mailboxes in the Exchange database. The module then connects to Exchange Web Services using the impersonation role to gather a number of emails from each mailbox, and ultimately searches through them for specific terms.
 
 .PARAMETER ImpersonationAccount
 
@@ -34,6 +34,10 @@ The total number of emails to return for each mailbox.
 .PARAMETER Terms
 
 Certain terms to search through each email subject and body for. By default the script looks for "*password*","*confidential*","*credentials*"
+
+.PARAMETER OutputCsv
+
+Outputs the results of the search to a CSV file.
 
 .EXAMPLE
 
@@ -77,7 +81,11 @@ Param(
 
   [Parameter(Position = 6, Mandatory = $False)]
   [int]
-  $MailsPerUser = 100
+  $MailsPerUser = 100,
+
+  [Parameter(Position = 7, Mandatory = $False)]
+  [string]
+  $OutputCsv = ""
 
 )
 
@@ -208,7 +216,12 @@ foreach ($item in $mails.Items)
     }
     }
 }
+if ($OutputCsv -ne ""){ 
+$PostSearchList | Select-Object Sender,ReceivedBy,Subject,Body | Export-Csv -Append $OutputCsv
+}
+else{
 $PostSearchList | ft -Property Sender,ReceivedBy,Subject,Body
+}
 }
 #Removing EWS DLL
 
@@ -257,6 +270,10 @@ Description
 -----------
 This command will connect to the Exchange server autodiscovered from the email address entered using Exchange Web Services where by default 100 of the latest emails from the "Mailbox" will be searched through for the terms "*pass*","*confidential*","*credentials*".
 
+.PARAMETER OutputCsv
+
+Outputs the results of the search to a CSV file.
+
 .EXAMPLE
 
 C:\PS> Invoke-SelfSearch -Mailbox current-user@domain.com -ExchHostname -MailsPerUser 2000 -Terms "*passwords*","*super secret*","*industrial control systems*","*scada*","*launch codes*"
@@ -281,7 +298,11 @@ Param(
 
   [Parameter(Position = 3, Mandatory = $False)]
   [int]
-  $MailsPerUser = 100
+  $MailsPerUser = 100,
+
+  [Parameter(Position = 4, Mandatory = $False)]
+  [string]
+  $OutputCsv = ""
 
 )
 
@@ -398,6 +419,9 @@ foreach ($item in $mails.Items)
     }
 }
 $PostSearchList | ft -Property Sender,ReceivedBy,Subject,Body
+if ($OutputCsv -ne ""){ 
+$PostSearchList | Select-Object Sender,ReceivedBy,Subject,Body | Export-Csv $OutputCsv
+}
 #Removing EWS DLL
 Remove-Item $env:temp\ews.dll -Force
 
