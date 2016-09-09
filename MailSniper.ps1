@@ -39,6 +39,10 @@ Certain terms to search through each email subject and body for. By default the 
 
 Outputs the results of the search to a CSV file.
 
+.PARAMETER ExchangeVersion
+
+In order to communicate with Exchange Web Services the correct version of Microsoft Exchange Server must be specified. By default this script tries "Exchange2013". Additional options to try are  Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1.
+
 .EXAMPLE
 
 C:\PS> Invoke-GlobalMailSearch -ImpersonationAccount current-username -ExchHostname Exch01
@@ -85,7 +89,11 @@ Param(
 
   [Parameter(Position = 7, Mandatory = $False)]
   [string]
-  $OutputCsv = ""
+  $OutputCsv = "",
+
+  [Parameter(Position = 8, Mandatory = $False)]
+  [string]
+  $ExchangeVersion = "Exchange2013"
 
 )
 
@@ -123,9 +131,9 @@ Write-Host "The total number of mailboxes discovered is: " $AllMailboxes.count
 #Running the LoadEWSDLL function to load the required Exchange Web Services dll
 LoadEWSDLL
 
-$ExchangeVersion = [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::Exchange2013
+$ServiceExchangeVersion = [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::$ExchangeVersion
 
-$service = New-Object Microsoft.Exchange.WebServices.Data.ExchangeService($ExchangeVersion)
+$service = New-Object Microsoft.Exchange.WebServices.Data.ExchangeService($ServiceExchangeVersion)
 
 #Using current user's credentials to connect to EWS
 $service.UseDefaultCredentials = $true
@@ -171,7 +179,7 @@ if ($ExchHostname -ne "")
 }
 else
 {
-    ("Autodiscovering " + $AutoDiscoverEmail + "...")
+    ("Autodiscovering email server for" + $AutoDiscoverEmail + "...")
     $service.AutoDiscoverUrl($AutoDiscoverEmail, {$true})
 }    
 
@@ -184,7 +192,19 @@ $service.ImpersonatedUserId = New-Object Microsoft.Exchange.WebServices.Data.Imp
 $rootfolder = [Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::Inbox
 $mbx = New-Object Microsoft.Exchange.WebServices.Data.Mailbox( $Mailbox )
 $FolderId = New-Object Microsoft.Exchange.WebServices.Data.FolderId( $rootfolder, $mbx)
-$Inbox = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,$FolderId)
+try{
+    $Inbox = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,$FolderId)
+}
+catch{
+$ErrorMessage = $_.Exception.Message
+if ($ErrorMessage -like "*Exchange Server doesn't support the requested version.*")
+{
+Write-Output "ERROR: The connection to Exchange failed using Exchange Version $ExchangeVersion."
+Write-Output "Try setting the -ExchangeVersion flag to the Exchange version of the server."
+Write-Output "Some options to try: Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1."
+break
+}
+}
 
 #$view = New-Object Microsoft.Exchange.WebServices.Data.ItemView(10)
 #$view.SearchFilter = New-Object Microsoft.Exchange.WebServices.Data.SearchFilter+ContainsSubstring([Microsoft.Exchange.WebServices.Data.EmailMessageSchema]::Body, "password");
@@ -256,6 +276,10 @@ Email address of the current user the PowerShell process is running as.
 
 Certain terms to search through each email subject and body for. By default the script looks for "*password*","*creds*","*credentials*"
 
+.PARAMETER ExchangeVersion
+
+In order to communicate with Exchange Web Services the correct version of Microsoft Exchange Server must be specified. By default this script tries "Exchange2013". Additional options to try are  Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1.
+
 .EXAMPLE
 
 C:\PS> Invoke-SelfSearch -Mailbox current-user@domain.com 
@@ -296,16 +320,21 @@ Param(
 
   [Parameter(Position = 4, Mandatory = $False)]
   [string]
-  $OutputCsv = ""
+  $OutputCsv = "",
+
+  [Parameter(Position = 5, Mandatory = $False)]
+  [string]
+  $ExchangeVersion = "Exchange2013"
 
 )
 #Running the LoadEWSDLL function to load the required Exchange Web Services dll
 LoadEWSDLL
 
-$ExchangeVersion = [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::Exchange2013
-Write-Output $ExchangeVersion
+Write-Output "Using Exchange Version $ExchangeVersion"
+$ServiceExchangeVersion = [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::$ExchangeVersion
 
-$service = New-Object Microsoft.Exchange.WebServices.Data.ExchangeService($ExchangeVersion)
+
+$service = New-Object Microsoft.Exchange.WebServices.Data.ExchangeService($ServiceExchangeVersion)
 #$creds = (Get-Credential).GetNetworkCredential()
 #$service.Credentials = New-Object System.Net.NetworkCredential -ArgumentList $creds.UserName, $creds.Password, $creds.Domain
 
@@ -353,18 +382,31 @@ if ($ExchHostname -ne "")
 }
 else
 {
-    ("Autodiscovering " + $Mailbox + "...")
+    ("Autodiscovering email server for " + $Mailbox + "...")
     $service.AutoDiscoverUrl($Mailbox, {$true})
 }    
 
-Write-Host "Not checking all mailboxes. Use Invoke-GlobalMailSearch to search all mailboxes."
 
     
 #    $service.ImpersonatedUserId = New-Object Microsoft.Exchange.WebServices.Data.ImpersonatedUserId([Microsoft.Exchange.WebServices.Data.ConnectingIdType]::SmtpAddress,$Mailbox ); 
     $rootfolder = [Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::Inbox
     $mbx = New-Object Microsoft.Exchange.WebServices.Data.Mailbox( $Mailbox )
-    $FolderId = New-Object Microsoft.Exchange.WebServices.Data.FolderId( $rootfolder, $mbx)
+    $FolderId = New-Object Microsoft.Exchange.WebServices.Data.FolderId( $rootfolder, $mbx)   
+try{
     $Inbox = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,$FolderId)
+}
+catch{
+$ErrorMessage = $_.Exception.Message
+if ($ErrorMessage -like "*Exchange Server doesn't support the requested version.*")
+{
+Write-Output "ERROR: The connection to Exchange failed using Exchange Version $ExchangeVersion."
+Write-Output "Try setting the -ExchangeVersion flag to the Exchange version of the server."
+Write-Output "Some options to try: Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1."
+break
+}
+}
+
+Write-Output "Now searching the mailbox of $Mailbox. Use Invoke-GlobalMailSearch to search all mailboxes on the domain."
 
     #$view = New-Object Microsoft.Exchange.WebServices.Data.ItemView(1000)
     #$SearchFilter = New-Object Microsoft.Exchange.WebServices.Data.SearchFilter+ContainsSubstring([Microsoft.Exchange.WebServices.Data.ItemSchema]::Body, "The");
@@ -377,8 +419,7 @@ Write-Host "Not checking all mailboxes. Use Invoke-GlobalMailSearch to search al
 
     #$findResults | % {$_.Load($PropertySet)}
     #$findResults | ft -Property Sender,Subject,Body
-       
-    
+  
 $mails = $Inbox.FindItems(1000)
 
 $PostSearchList = @()    
