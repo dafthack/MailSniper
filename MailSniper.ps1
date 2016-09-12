@@ -1,4 +1,3 @@
-
 function Invoke-GlobalMailSearch{
 <#
 .SYNOPSIS
@@ -231,10 +230,14 @@ foreach ($item in $mails.Items)
     }
 }
 if ($OutputCsv -ne ""){ 
-$PostSearchList | Select-Object Sender,ReceivedBy,Subject,Body | Export-Csv -Append $OutputCsv
+$PostSearchList | Select-Object Sender,ReceivedBy,Subject,Body | Export-Csv "temp-$OutputCsv"
 }
 else{
-$PostSearchList | ft -Property Sender,ReceivedBy,Subject,Body
+$PostSearchList | ft -Property Sender,ReceivedBy,Subject,Body | Out-String
+}
+if ("temp-$OutputCsv"){
+[System.IO.File]::ReadAllText("temp-$OutputCsv") | Out-File $OutputCsv -Append 
+Remove-Item "temp-$OutputCsv"
 }
 }
 #Removing EWS DLL
@@ -466,8 +469,7 @@ $DeflatedStream.Read($UncompressedFileBytes, 0, 1130264) | Out-Null
 #$PEBytes = [System.Convert]::FromBase64String($Base64)
 Set-Content -Path $env:temp\ews.dll -Value $UncompressedFileBytes -Encoding Byte
 #Set-Variable -Name temp -Value $Content -Encoding Byte
-#$Assembly = [Reflection.Assembly]::LoadFile((Get-Item -Path $env:temp\ews.dll).FullName)
-#$Assembly = [Reflection.Assembly]::Load([System.IO.File]::ReadAllBytes("C:\Users\vladi\AppData\Local\Temp\ews.dll"))
+
 Add-Type -Path $env:temp\ews.dll
 
 }
