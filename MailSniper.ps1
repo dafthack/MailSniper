@@ -98,11 +98,11 @@ Param(
 
 if (($ExchHostname -ne "") -Or ($AutoDiscoverEmail -ne ""))
 {
-Write-Output "Continuing"
+Write-Output ""
 }
 else
 {
-Write-Output "Either the option 'ExchHostname' or 'AutoDiscoverEmail' must be entered!"
+Write-Output "[*] Either the option 'ExchHostname' or 'AutoDiscoverEmail' must be entered!"
 break
 }
 
@@ -110,26 +110,47 @@ break
 #Connect to remote Exchange Server and add Impersonation Role to a user account
 
 #Prompt for Domain Admin Credentials
-Write-Host "Enter Domain Admin Credentials to add your user to the impersonation role"
+Write-Host "[*] Enter Domain Admin credentials to add your user to the impersonation role"
+
 $Login = Get-Credential
 
 
 #PowerShell Remoting to Remote Exchange Server, Import Exchange Management Shell Tools
+
 $ExchUri = New-Object System.Uri(("http://" + $ExchHostname + "/PowerShell/"))
-$Session = New-PSSession -ConfigurationName Microsoft.Exchange -ConnectionUri $ExchUri -Authentication Kerberos -Credential $Login
-Import-PSSession $Session
+try{
+$Session = New-PSSession -ConfigurationName Microsoft.Exchange -ConnectionUri $ExchUri -Authentication Kerberos -Credential $Login -ErrorAction Stop -verbose:$false 
+}
+catch{
+$ErrorMessage = $_.Exception.Message
+if ($ErrorMessage -like "*Logon failure*")
+{
+Write-Output "[*] ERROR: Logon failure. Ensure you have entered the correct credentials including the domain (i.e domain\username)."
+break
+}
+}
+Write-Output "[*] Now connecting to Exchange server at $ExchHostname with provided credentials."
+try{
+Import-PSSession $Session -DisableNameChecking -verbose:$false | Out-Null
+}
+catch{
+Write-Output "[*] ERROR: Failed to connect to Exchange server at $ExchHostname. Check server name."
+break
+}
 
 #Allow user to impersonate other users
-New-ManagementRoleAssignment -Name:impersonationAssignmentName -Role:ApplicationImpersonation -User:$ImpersonationAccount
+Write-Output "[*] Now granting the $ImpersonationAccount user ApplicationImpersonation rights!"
+New-ManagementRoleAssignment -Name:impersonationAssignmentName -Role:ApplicationImpersonation -User:$ImpersonationAccount | Out-Null
 
 #Get List of All Mailboxes
 $SMTPAddresses = Get-Mailbox | Select Name -ExpandProperty EmailAddresses
 $AllMailboxes = $SMTPAddresses -replace ".*:"
-Write-Host "The total number of mailboxes discovered is: " $AllMailboxes.count
+Write-Host "[*] The total number of mailboxes discovered is: " $AllMailboxes.count
 
 #Running the LoadEWSDLL function to load the required Exchange Web Services dll
 LoadEWSDLL
 
+Write-Output "[*] Trying Exchange version $ExchangeVersion"
 $ServiceExchangeVersion = [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::$ExchangeVersion
 
 $service = New-Object Microsoft.Exchange.WebServices.Data.ExchangeService($ServiceExchangeVersion)
@@ -173,19 +194,19 @@ $TrustAll=$TAAssembly.CreateInstance("Local.ToolkitExtensions.Net.CertificatePol
   
 if ($ExchHostname -ne "")
 {
-    ("Using EWS URL " + "https://" + $ExchHostname + "/EWS/Exchange.asmx")
+    ("[*] Using EWS URL " + "https://" + $ExchHostname + "/EWS/Exchange.asmx")
     $service.Url = new-object System.Uri(("https://" + $ExchHostname + "/EWS/Exchange.asmx"))
 }
 else
 {
-    ("Autodiscovering email server for" + $AutoDiscoverEmail + "...")
+    ("[*] Autodiscovering email server for" + $AutoDiscoverEmail + "...")
     $service.AutoDiscoverUrl($AutoDiscoverEmail, {$true})
 }    
 
 
 ForEach($Mailbox in $AllMailboxes){
 
-Write-Host 'Using' $ImpersonationAccount 'to impersonate' $Mailbox
+Write-Host '[*] Using' $ImpersonationAccount 'to impersonate' $Mailbox
 
 $service.ImpersonatedUserId = New-Object Microsoft.Exchange.WebServices.Data.ImpersonatedUserId([Microsoft.Exchange.WebServices.Data.ConnectingIdType]::SmtpAddress,$Mailbox ); 
 $rootfolder = [Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::Inbox
@@ -198,9 +219,9 @@ catch{
 $ErrorMessage = $_.Exception.Message
 if ($ErrorMessage -like "*Exchange Server doesn't support the requested version.*")
 {
-Write-Output "ERROR: The connection to Exchange failed using Exchange Version $ExchangeVersion."
-Write-Output "Try setting the -ExchangeVersion flag to the Exchange version of the server."
-Write-Output "Some options to try: Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1."
+Write-Output "[*] ERROR: The connection to Exchange failed using Exchange Version $ExchangeVersion."
+Write-Output "[*] Try setting the -ExchangeVersion flag to the Exchange version of the server."
+Write-Output "[*] Some options to try: Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1."
 break
 }
 }
@@ -231,14 +252,15 @@ foreach ($item in $mails.Items)
 }
 if ($OutputCsv -ne ""){ 
 $PostSearchList | Select-Object Sender,ReceivedBy,Subject,Body | Export-Csv "temp-$OutputCsv"
-}
-else{
-$PostSearchList | ft -Property Sender,ReceivedBy,Subject,Body | Out-String
-}
 if ("temp-$OutputCsv"){
 [System.IO.File]::ReadAllText("temp-$OutputCsv") | Out-File $OutputCsv -Append 
 Remove-Item "temp-$OutputCsv"
 }
+}
+else{
+$PostSearchList | ft -Property Sender,ReceivedBy,Subject,Body | Out-String
+}
+
 }
 #Removing EWS DLL
 
@@ -333,7 +355,7 @@ Param(
 #Running the LoadEWSDLL function to load the required Exchange Web Services dll
 LoadEWSDLL
 
-Write-Output "Using Exchange Version $ExchangeVersion"
+Write-Output "[*] Trying Exchange version $ExchangeVersion"
 $ServiceExchangeVersion = [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::$ExchangeVersion
 
 
@@ -380,12 +402,12 @@ $TrustAll=$TAAssembly.CreateInstance("Local.ToolkitExtensions.Net.CertificatePol
   
 if ($ExchHostname -ne "")
 {
-    ("Using EWS URL " + "https://" + $ExchHostname + "/EWS/Exchange.asmx")
+    ("[*] Using EWS URL " + "https://" + $ExchHostname + "/EWS/Exchange.asmx")
     $service.Url = new-object System.Uri(("https://" + $ExchHostname + "/EWS/Exchange.asmx"))
 }
 else
 {
-    ("Autodiscovering email server for " + $Mailbox + "...")
+    ("[*] Autodiscovering email server for " + $Mailbox + "...")
     $service.AutoDiscoverUrl($Mailbox, {$true})
 }    
 
@@ -402,14 +424,14 @@ catch{
 $ErrorMessage = $_.Exception.Message
 if ($ErrorMessage -like "*Exchange Server doesn't support the requested version.*")
 {
-Write-Output "ERROR: The connection to Exchange failed using Exchange Version $ExchangeVersion."
-Write-Output "Try setting the -ExchangeVersion flag to the Exchange version of the server."
-Write-Output "Some options to try: Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1."
+Write-Output "[*] ERROR: The connection to Exchange failed using Exchange Version $ExchangeVersion."
+Write-Output "[*] Try setting the -ExchangeVersion flag to the Exchange version of the server."
+Write-Output "[*] Some options to try: Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1."
 break
 }
 }
 
-Write-Output "Now searching the mailbox of $Mailbox. Use Invoke-GlobalMailSearch to search all mailboxes on the domain."
+Write-Output "[*] Now searching the mailbox of $Mailbox. Use Invoke-GlobalMailSearch to search all mailboxes on the domain."
 
     #$view = New-Object Microsoft.Exchange.WebServices.Data.ItemView(1000)
     #$SearchFilter = New-Object Microsoft.Exchange.WebServices.Data.SearchFilter+ContainsSubstring([Microsoft.Exchange.WebServices.Data.ItemSchema]::Body, "The");
