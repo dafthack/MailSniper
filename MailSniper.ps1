@@ -263,8 +263,8 @@ $PostSearchList | ft -Property Sender,ReceivedBy,Subject,Body | Out-String
 
 }
 #Removing EWS DLL
-
-Remove-Item $env:temp\ews.dll
+Start-Process -NoNewWindow powershell.exe -argument "-command Start-Sleep -m 250; Remove-Item $env:temp\ews.dll -Force"
+exit
 
 #Remove User from impersonation role
 Get-ManagementRoleAssignment -RoleAssignee $ImpersonationAccount -Role ApplicationImpersonation -RoleAssigneeType user | Remove-ManagementRoleAssignment -confirm:$false
@@ -358,8 +358,8 @@ LoadEWSDLL
 Write-Output "[*] Trying Exchange version $ExchangeVersion"
 $ServiceExchangeVersion = [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::$ExchangeVersion
 
-
 $service = New-Object Microsoft.Exchange.WebServices.Data.ExchangeService($ServiceExchangeVersion)
+
 #$creds = (Get-Credential).GetNetworkCredential()
 #$service.Credentials = New-Object System.Net.NetworkCredential -ArgumentList $creds.UserName, $creds.Password, $creds.Domain
 
@@ -431,7 +431,7 @@ break
 }
 }
 
-Write-Output "[*] Now searching the mailbox of $Mailbox. Use Invoke-GlobalMailSearch to search all mailboxes on the domain."
+Write-Output "[*] Now searching the mailbox of $Mailbox for the terms $Terms."
 
     #$view = New-Object Microsoft.Exchange.WebServices.Data.ItemView(1000)
     #$SearchFilter = New-Object Microsoft.Exchange.WebServices.Data.SearchFilter+ContainsSubstring([Microsoft.Exchange.WebServices.Data.ItemSchema]::Body, "The");
@@ -467,8 +467,8 @@ if ($OutputCsv -ne ""){
 $PostSearchList | Select-Object Sender,ReceivedBy,Subject,Body | Export-Csv $OutputCsv
 }
 #Removing EWS DLL
-Remove-Item $env:temp\ews.dll -Force
-
+Start-Process -NoNewWindow powershell.exe -argument "-command Start-Sleep -m 250; Remove-Item $env:temp\ews.dll -Force"
+exit
 
 }
 
@@ -489,9 +489,9 @@ $DeflatedStream.Read($UncompressedFileBytes, 0, 1130264) | Out-Null
 #$Content = [System.Convert]::FromBase64String($Base64)
 #[Byte[]]$PEBytes = [Byte[]][Convert]::FromBase64String($Base64)
 #$PEBytes = [System.Convert]::FromBase64String($Base64)
-Set-Content -Path $env:temp\ews.dll -Value $UncompressedFileBytes -Encoding Byte
 #Set-Variable -Name temp -Value $Content -Encoding Byte
 
+Set-Content -Path $env:temp\ews.dll -Value $UncompressedFileBytes -Encoding Byte
 Add-Type -Path $env:temp\ews.dll
 
 }
