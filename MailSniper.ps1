@@ -104,7 +104,11 @@ function Invoke-GlobalMailSearch{
 
     [Parameter(Position = 8, Mandatory = $False)]
     [string]
-    $ExchangeVersion = "Exchange2013"
+    $ExchangeVersion = "Exchange2013",
+
+    [Parameter(Position = 9, Mandatory = $False)]
+    [string]
+    $EmailList = ""
   )
 
   #Check for a method of connecting to the Exchange Server
@@ -227,10 +231,17 @@ $TASource=@'
   New-ManagementRoleAssignment -Name:impersonationAssignmentName -Role:ApplicationImpersonation -User:$ImpersonationAccount | Out-Null
 
   #Get a list of all mailboxes
-  $SMTPAddresses = Get-Mailbox | Select Name -ExpandProperty EmailAddresses
-  $AllMailboxes = $SMTPAddresses -replace ".*:"
-  Write-Host "[*] The total number of mailboxes discovered is: " $AllMailboxes.count
-
+  if($EmailList -ne "")
+  {
+    Write-Output $EmailList
+    $AllMailboxes = Get-Content -Path $EmailList
+  }
+  else 
+  {
+    $SMTPAddresses = Get-Mailbox | Select Name -ExpandProperty EmailAddresses
+    $AllMailboxes = $SMTPAddresses -replace ".*:"
+    Write-Host "[*] The total number of mailboxes discovered is: " $AllMailboxes.count
+  }
   #Set the Exchange Web Services URL 
   if ($ExchHostname -ne "")
   {
@@ -268,6 +279,7 @@ $TASource=@'
       }
     }
 
+
     #$view = New-Object Microsoft.Exchange.WebServices.Data.ItemView(10)
     #$view.SearchFilter = New-Object Microsoft.Exchange.WebServices.Data.SearchFilter+ContainsSubstring([Microsoft.Exchange.WebServices.Data.EmailMessageSchema]::Body, "password");
     #$findResults = $service.FindItems([Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::Inbox,$view)
@@ -284,7 +296,7 @@ $TASource=@'
     #For each mail item in the mailbox search the body and subject for specific terms    
     foreach ($item in $mails.Items)
     {    
-      $item.Load($PropertySet)
+      $item.Load($PropertySet) 
       foreach($specificterm in $Terms)
       {
         if ($item.Body.Text -like $specificterm)
