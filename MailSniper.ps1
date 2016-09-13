@@ -22,6 +22,14 @@ function Invoke-GlobalMailSearch{
 
     The hostname of the Exchange server to connect to.
 
+  .PARAMETER DAUserName
+
+    The username of a domain administrator including the domain (i.e. domain\domainadminusername).
+
+  .PARAMETER DAPassword
+
+    The Password to the domain administrator account specified with DAUserName.
+
   .PARAMETER AutoDiscoverEmail
 
     A valid email address that will be used to autodiscover where the Exchange server is located.
@@ -41,6 +49,10 @@ function Invoke-GlobalMailSearch{
   .PARAMETER ExchangeVersion
 
     In order to communicate with Exchange Web Services the correct version of Microsoft Exchange Server must be specified. By default this script tries "Exchange2013". Additional options to try are  Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1.
+
+  .PARAMETER EmailList
+
+    A text file listing email addresses to search (one per line).
 
   .EXAMPLE
 
@@ -378,6 +390,10 @@ function Invoke-SelfSearch{
   .PARAMETER OutputCsv
 
     Outputs the results of the search to a CSV file.
+
+  .PARAMETER MailsPerUser
+
+    The total number of emails to return for each mailbox.
   
   .EXAMPLE
 
