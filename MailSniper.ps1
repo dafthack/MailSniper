@@ -257,7 +257,8 @@ $TASource=@'
   #Search function searches through each mailbox one at a time
   ForEach($Mailbox in $AllMailboxes)
   {
-    Write-Host '[*] Using' $ImpersonationAccount 'to impersonate' $Mailbox
+    $i++
+        Write-Output ("[" + $i + "/" + $AllMailboxes.count + "] Using " + $ImpersonationAccount + " to impersonate " + $Mailbox)
 
     $service.ImpersonatedUserId = New-Object Microsoft.Exchange.WebServices.Data.ImpersonatedUserId([Microsoft.Exchange.WebServices.Data.ConnectingIdType]::SmtpAddress,$Mailbox ); 
     $rootfolder = [Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::Inbox
@@ -290,7 +291,14 @@ $TASource=@'
     $PropertySet.RequestedBodyType = [Microsoft.Exchange.WebServices.Data.BodyType]::Text
     
     #Specify the number of emails to grab from each mailbox    
-    $mails = $Inbox.FindItems($MailsPerUser)
+    try 
+    {
+      $mails = $Inbox.FindItems($MailsPerUser)
+    }
+    catch [Exception]{
+      Write-Output ("[*] Warning: " + $Mailbox + " does not appear to have a mailbox.")
+      continue
+    }
     $PostSearchList = @()
 
     #For each mail item in the mailbox search the body and subject for specific terms    
