@@ -79,6 +79,10 @@ Param(
   [string]
   $DAUserName = "",
 
+  [Parameter(Position = 4, Mandatory = $false)]
+  [string]
+  $DAPassword = "",
+
   [Parameter(Position = 5, Mandatory = $False)]
   [string[]]$Terms = ("*password*","*creds*","*credentials*"),
 
@@ -109,11 +113,17 @@ break
 
 #Connect to remote Exchange Server and add Impersonation Role to a user account
 
-#Prompt for Domain Admin Credentials
-Write-Host "[*] Enter Domain Admin credentials to add your user to the impersonation role"
-
-$Login = Get-Credential
-
+if ($DAPassword -ne "")
+{
+  $password = $DAPassword | ConvertTo-SecureString -asPlainText -Force
+  $Login = New-Object System.Management.Automation.PSCredential($DAUserName,$password)
+}
+else
+{
+  #Prompt for Domain Admin Credentials
+  Write-Host "[*] Enter Domain Admin credentials to add your user to the impersonation role"
+  $Login = Get-Credential
+}
 
 #PowerShell Remoting to Remote Exchange Server, Import Exchange Management Shell Tools
 
@@ -262,13 +272,14 @@ $PostSearchList | ft -Property Sender,ReceivedBy,Subject,Body | Out-String
 }
 
 }
+#Remove User from impersonation role
+Write-Output "Removing ApplicationImpersonation role from $ImpersonationAccount."
+Get-ManagementRoleAssignment -RoleAssignee $ImpersonationAccount -Role ApplicationImpersonation -RoleAssigneeType user | Remove-ManagementRoleAssignment -confirm:$false
+
+
 #Removing EWS DLL
 Start-Process -NoNewWindow powershell.exe -argument "-command Start-Sleep -m 250; Remove-Item $env:temp\ews.dll -Force"
 exit
-
-#Remove User from impersonation role
-Get-ManagementRoleAssignment -RoleAssignee $ImpersonationAccount -Role ApplicationImpersonation -RoleAssigneeType user | Remove-ManagementRoleAssignment -confirm:$false
-
 
 }
 
