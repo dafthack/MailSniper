@@ -338,7 +338,7 @@ $TASource=@'
       $PostSearchList | Select-Object Sender,ReceivedBy,Subject,Body | Export-Csv "temp-$OutputCsv"
         if ("temp-$OutputCsv")
         {
-          Import-Csv "temp-$OutputCsv" | ConvertTo-Csv -NoTypeInformation | Out-File -Encoding ascii -Append $OutputCsv
+          Import-Csv "temp-$OutputCsv" | ConvertTo-Csv -NoTypeInformation | Select-Object -Skip 1 | Out-File -Encoding ascii -Append $OutputCsv
           Remove-Item "temp-$OutputCsv"
         }
     }
@@ -350,6 +350,8 @@ $TASource=@'
   
   if ($OutputCsv -ne "")
   {
+    $filedata = Import-Csv $OutputCsv -Header Sender , ReceivedBy , Subject , Body
+    $filedata | Export-Csv $OutputCsv -NoTypeInformation
     Write-Host -foregroundcolor "yellow" "`r`n[*] Results have been output to $OutputCsv"
   }
   #Remove User from impersonation role
