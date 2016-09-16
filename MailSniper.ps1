@@ -22,13 +22,13 @@ function Invoke-GlobalMailSearch{
 
     The hostname of the Exchange server to connect to.
 
-  .PARAMETER DAUserName
+  .PARAMETER AdminUserName
 
-    The username of a domain administrator including the domain (i.e. domain\domainadminusername).
+    The username of an Exchange administrator (i.e. member of "Exchange Organization Administrators" or "Organization Management" group) including the domain (i.e. domain\adminusername).
 
-  .PARAMETER DAPassword
+  .PARAMETER AdminPassword
 
-    The Password to the domain administrator account specified with DAUserName.
+    The Password to the Exchange administrator (i.e. member of "Exchange Organization Administrators" or "Organization Management" group) account specified with AdminUserName.
 
   .PARAMETER AutoDiscoverEmail
 
@@ -48,7 +48,7 @@ function Invoke-GlobalMailSearch{
 
   .PARAMETER ExchangeVersion
 
-    In order to communicate with Exchange Web Services the correct version of Microsoft Exchange Server must be specified. By default this script tries "Exchange2013". Additional options to try are  Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1.
+    In order to communicate with Exchange Web Services the correct version of Microsoft Exchange Server must be specified. By default this script tries "Exchange2010". Additional options to try are  Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1.
 
   .PARAMETER EmailList
 
@@ -72,11 +72,11 @@ function Invoke-GlobalMailSearch{
 
   .EXAMPLE
 
-    C:\PS> Invoke-GlobalMailSearch -ImpersonationAccount current-username -ExchHostname Exch01 -DAUserName domain\domainadminuser -DAPassword Summer123 -ExchangeVersion Exchange2010 -OutputCsv global-email-search.csv
+    C:\PS> Invoke-GlobalMailSearch -ImpersonationAccount current-username -ExchHostname Exch01 -AdminUserName domain\exchangeadminuser -AdminPassword Summer123 -ExchangeVersion Exchange2010 -OutputCsv global-email-search.csv
 
     Description
     -----------
-    This command will connect to the Exchange server located at 'Exch01' and use the domain admin username and password specified in the command line. A PS remoting session is setup to the Exchange server where the ApplicationImpersonation role is then granted to the "current-username" user. A list of all email addresses in the domain is then gathered, followed by a connection to Exchange Web Services using an Exchange Version of Exchange2010 as "current-username" where by default 100 of the latest emails from each mailbox will be searched through for the terms "*pass*","*creds*","*credentials*" and output to a CSV called global-email-search.csv.
+    This command will connect to the Exchange server located at 'Exch01' and use the Exchange admin username and password specified in the command line. A PS remoting session is setup to the Exchange server where the ApplicationImpersonation role is then granted to the "current-username" user. A list of all email addresses in the domain is then gathered, followed by a connection to Exchange Web Services using an Exchange Version of Exchange2010 as "current-username" where by default 100 of the latest emails from each mailbox will be searched through for the terms "*pass*","*creds*","*credentials*" and output to a CSV called global-email-search.csv.
 
 #>
 
@@ -97,11 +97,11 @@ function Invoke-GlobalMailSearch{
 
     [Parameter(Position = 3, Mandatory = $false)]
     [string]
-    $DAUserName = "",
+    $AdminUserName = "",
 
     [Parameter(Position = 4, Mandatory = $false)]
     [string]
-    $DAPassword = "",
+    $AdminPassword = "",
 
     [Parameter(Position = 5, Mandatory = $False)]
     [string[]]$Terms = ("*password*","*creds*","*credentials*"),
@@ -116,7 +116,7 @@ function Invoke-GlobalMailSearch{
 
     [Parameter(Position = 8, Mandatory = $False)]
     [string]
-    $ExchangeVersion = "Exchange2013",
+    $ExchangeVersion = "Exchange2010",
 
     [Parameter(Position = 9, Mandatory = $False)]
     [string]
@@ -192,15 +192,15 @@ $TASource=@'
     $ExchUri = New-Object System.Uri(("http://" + $ExchHostname + "/PowerShell/"))
   }
 
-  #If the Domain Admin credentials were passed to the command line use those else prompt for Domain Admin credentials.
-  if ($DAPassword -ne "")
+  #If the Exchange admin credentials were passed to the command line use those else prompt for Exchange admin credentials.
+  if ($AdminPassword -ne "")
   {
-    $password = $DAPassword | ConvertTo-SecureString -asPlainText -Force
-    $Login = New-Object System.Management.Automation.PSCredential($DAUserName,$password)
+    $password = $AdminPassword | ConvertTo-SecureString -asPlainText -Force
+    $Login = New-Object System.Management.Automation.PSCredential($AdminUserName,$password)
   }
   else
   {
-    Write-Host "[*] Enter Domain Admin credentials to add your user to the impersonation role"
+    Write-Host "[*] Enter Exchange admin credentials to add your user to the impersonation role"
     $Login = Get-Credential
   }
 
@@ -214,29 +214,40 @@ $TASource=@'
     $ErrorMessage = $_.Exception.Message
     if ($ErrorMessage -like "*Logon failure*")
     {
-      Write-Output "[*] ERROR: Logon failure. Ensure you have entered the correct credentials including the domain (i.e domain\username)."
+      Write-Host -foregroundcolor "red" "[*] ERROR: Logon failure. Ensure you have entered the correct credentials including the domain (i.e domain\username)."
       break
     }
+    Write-Host -foregroundcolor "red" "$ErrorMessage"
+    break
   }
   
   if($AutoDiscoverEmail -ne "")
   {
     Write-Output ("[*] Attempting to establish a PowerShell session to http://" + $service.Url.Host + "/PowerShell with provided credentials.")
+    try
+    {
+      Import-PSSession $Session -DisableNameChecking -AllowClobber -verbose:$false | Out-Null
+    }
+    catch
+    {
+    Write-host -foregroundcolor "red" ("[*] ERROR: Failed to connect to Exchange server at " + $service.Url.Host + ". Check server name.")
+    break
+    } 
   }
   else
   {
     Write-Output ("[*] Attempting to establish a PowerShell session to http://" + $ExchHostname + "/PowerShell with provided credentials.")
+    try
+    {
+      Import-PSSession $Session -DisableNameChecking -AllowClobber -verbose:$false | Out-Null
+    }
+    catch
+    {
+      Write-Host -foregroundcolor "red" "[*] ERROR: Failed to connect to Exchange server at $ExchHostname. Check server name."
+      break
+  }
   }
   
-  try
-  {
-    Import-PSSession $Session -DisableNameChecking -AllowClobber -verbose:$false | Out-Null
-  }
-  catch
-  {
-    Write-Output "[*] ERROR: Failed to connect to Exchange server at $ExchHostname. Check server name."
-    break
-  }
 
   #Allow user to impersonate other users
   Write-Output "[*] Now granting the $ImpersonationAccount user ApplicationImpersonation rights!"
@@ -288,9 +299,9 @@ $TASource=@'
       $ErrorMessage = $_.Exception.Message
       if ($ErrorMessage -like "*Exchange Server doesn't support the requested version.*")
       {
-        Write-Output "[*] ERROR: The connection to Exchange failed using Exchange Version $ExchangeVersion."
-        Write-Output "[*] Try setting the -ExchangeVersion flag to the Exchange version of the server."
-        Write-Output "[*] Some options to try: Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1."
+        Write-Host -foregroundcolor "red" "[*] ERROR: The connection to Exchange failed using Exchange Version $ExchangeVersion."
+        Write-Host -foregroundcolor "red" "[*] Try setting the -ExchangeVersion flag to the Exchange version of the server."
+        Write-Host -foregroundcolor "red" "[*] Some options to try: Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1."
         break
       }
     }
@@ -395,7 +406,7 @@ function Invoke-SelfSearch{
 
   .PARAMETER ExchangeVersion
 
-    In order to communicate with Exchange Web Services the correct version of Microsoft Exchange Server must be specified. By default this script tries "Exchange2013". Additional options to try are  Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1.
+    In order to communicate with Exchange Web Services the correct version of Microsoft Exchange Server must be specified. By default this script tries "Exchange2010". Additional options to try are  Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1.
   
   .PARAMETER OutputCsv
 
@@ -445,7 +456,7 @@ function Invoke-SelfSearch{
 
     [Parameter(Position = 5, Mandatory = $False)]
     [string]
-    $ExchangeVersion = "Exchange2013"
+    $ExchangeVersion = "Exchange2010"
 
   )
   #Running the LoadEWSDLL function to load the required Exchange Web Services dll
