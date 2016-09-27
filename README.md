@@ -34,7 +34,7 @@ AutoDiscoverEmail     - A valid email address that will be used to autodiscover 
 MailsPerUser          - The total number of emails to return for each mailbox.
 Terms                 - Certain terms to search through each email subject and body for. By default the script searches for "*password*","*creds*","*credentials*".
 OutputCsv             - Outputs the results of the search to a CSV file.
-ExchangeVersion       - Specify the version of Exchange server to connect to. By default the script tries Exchange2013.
+ExchangeVersion       - Specify the version of Exchange server to connect to. By default the script tries Exchange2010.
 AdminUserName         - The username of an Exchange administator (i.e. member of the "Exchange Organization Administrators" or "Organization Management" group) including the domain (i.e. domain\adminusername).
 AdminPassword         - The password to the Exchange administator (i.e. member of the "Exchange Organization Administrators" or "Organization Management" group) account specified with AdminUserName.
 EmailList             - A text file listing email addresses to search (one per line).
@@ -46,5 +46,5 @@ Mailbox               - Email address of the current user the PowerShell process
 MailsPerUser          - The total number of emails to return.
 Terms                 - Certain terms to search through each email subject and body for. By default the script searches for "*password*","*creds*","*credentials*".
 OutputCsv             - Outputs the results of the search to a CSV file.
-ExchangeVersion       - Specify the version of Exchange server to connect to. By default the script tries Exchange2013.
+ExchangeVersion       - Specify the version of Exchange server to connect to. By default the script tries Exchange2010.
 ```
