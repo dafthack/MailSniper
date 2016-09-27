@@ -261,7 +261,7 @@ $TASource=@'
   }
   else 
   {
-    $SMTPAddresses = Get-Mailbox | Select Name -ExpandProperty EmailAddresses
+    $SMTPAddresses = Get-Mailbox -ResultSize unlimited | Select Name -ExpandProperty EmailAddresses
     $AllMailboxes = $SMTPAddresses -replace ".*:"
     Write-Host "[*] The total number of mailboxes discovered is: " $AllMailboxes.count
   }
@@ -540,7 +540,7 @@ function Invoke-SelfSearch{
   $PropertySet = New-Object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.BasePropertySet]::FirstClassProperties)
   $PropertySet.RequestedBodyType = [Microsoft.Exchange.WebServices.Data.BodyType]::Text
  
-  $mails = $Inbox.FindItems(1000)
+  $mails = $Inbox.FindItems($MailsPerUser)
   $PostSearchList = @()    
   foreach ($item in $mails.Items)
   {    
