@@ -47,4 +47,5 @@ MailsPerUser          - The total number of emails to return.
 Terms                 - Certain terms to search through each email subject and body for. By default the script searches for "*password*","*creds*","*credentials*".
 OutputCsv             - Outputs the results of the search to a CSV file.
 ExchangeVersion       - Specify the version of Exchange server to connect to. By default the script tries Exchange2010.
+Remote                - A switch for performing the search remotely across the Internet against a system hosting EWS. Instead of utilizing the current user's credentials if the -Remote option is added a new credential box will pop up for accessing the remote EWS service. 
 ```
