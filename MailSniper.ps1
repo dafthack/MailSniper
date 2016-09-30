@@ -415,6 +415,10 @@ function Invoke-SelfSearch{
   .PARAMETER MailsPerUser
 
     The total number of emails to return for each mailbox.
+
+  .PARAMETER Remote
+
+    A switch for performing the search remotely across the Internet against a system hosting EWS. Instead of utilizing the current user's credentials if the -Remote option is added a new credential box will pop up for accessing the remote EWS service. 
   
   .EXAMPLE
 
@@ -431,6 +435,14 @@ function Invoke-SelfSearch{
     Description
     -----------
     This command will connect to the Exchange server entered as "ExchHostname" followed by a connection to Exchange Web Services as where 2000 of the latest emails from the "Mailbox" will be searched through for the terms "*passwords*","*super secret*","*industrial control systems*","*scada*","*launch codes*".
+  
+  .EXAMPLE
+
+    C:\PS> Invoke-SelfSearch -Mailbox current-user@domain.com -ExchHostname mail.domain.com -OutputCsv mails.csv -Remote
+
+    Description
+    -----------
+    This command will connect to the remote Exchange server specified with -ExchHostname using Exchange Web Services where by default 100 of the latest emails from the "Mailbox" will be searched through for the terms "*pass*","*creds*","*credentials*". Since the -Remote flag was passed a new credential box will popup asking for the user's credentials to authenticate to the remote EWS. The username should be the user's domain login (i.e. domain\username) but depending on how internal UPN's were setup it might accept the user's email address (i.e. user@domain.com).
 
 #>
   Param(
@@ -456,7 +468,11 @@ function Invoke-SelfSearch{
 
     [Parameter(Position = 5, Mandatory = $False)]
     [string]
-    $ExchangeVersion = "Exchange2010"
+    $ExchangeVersion = "Exchange2010",
+
+    [Parameter(Position = 6, Mandatory = $False)]
+    [switch]
+    $Remote
 
   )
   #Running the LoadEWSDLL function to load the required Exchange Web Services dll
@@ -467,8 +483,18 @@ function Invoke-SelfSearch{
 
   $service = New-Object Microsoft.Exchange.WebServices.Data.ExchangeService($ServiceExchangeVersion)
 
-  #Using current user's credentials to connect to EWS
-  $service.UseDefaultCredentials = $true
+  #If the -Remote flag was passed prompt for the user's domain credentials.
+  if ($Remote)
+  {
+    $remotecred = Get-Credential
+    $service.UseDefaultCredentials = $false
+    $service.Credentials = $remotecred.GetNetworkCredential()
+  }
+  else
+  {
+    #Using current user's credentials to connect to EWS
+    $service.UseDefaultCredentials = $true
+  }
 
   ## Choose to ignore any SSL Warning issues caused by Self Signed Certificates     
   ## Code From http://poshcode.org/624
