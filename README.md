@@ -1,9 +1,11 @@
 # MailSniper
 MailSniper is a penetration testing tool for searching through email in a Microsoft Exchange environment for specific terms (passwords, insider intel, network architecture information, etc.). It can be used as a non-administrative user to search their own email, or by an Exchange administrator to search the mailboxes of every user in a domain.
 
+For more information about MailSniper check out this [blog post](http://www.blackhillsinfosec.com/?p=5296).
+
 MailSniper also includes additional modules for password spraying, and gathering the Global Address List from OWA and EWS.
 
-For more information check out this [blog post](http://www.blackhillsinfosec.com/?p=5296).
+For more information about additional MailSniper modules check out this [blog post](http://www.blackhillsinfosec.com/?p=5330).
 
 ## Quick Start Guide
 There are two main functions in MailSniper. These two functions are **Invoke-GlobalMailSearch** and **Invoke-SelfSearch**.
