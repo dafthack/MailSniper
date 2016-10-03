@@ -1,6 +1,8 @@
 # MailSniper
 MailSniper is a penetration testing tool for searching through email in a Microsoft Exchange environment for specific terms (passwords, insider intel, network architecture information, etc.). It can be used as a non-administrative user to search their own email, or by an Exchange administrator to search the mailboxes of every user in a domain.
 
+MailSniper also includes additional modules for password spraying, and gathering the Global Address List from OWA and EWS.
+
 For more information check out this [blog post](http://www.blackhillsinfosec.com/?p=5296).
 
 ## Quick Start Guide
@@ -49,3 +51,18 @@ OutputCsv             - Outputs the results of the search to a CSV file.
 ExchangeVersion       - Specify the version of Exchange server to connect to. By default the script tries Exchange2010.
 Remote                - A switch for performing the search remotely across the Internet against a system hosting EWS. Instead of utilizing the current user's credentials if the -Remote option is added a new credential box will pop up for accessing the remote EWS service. 
 ```
+## Additional MailSniper Modules
+**Get-GlobalAddressList** is a module that will first attempt to connect to an Outlook Web Access portal and utilize the "FindPeople" method (only available in Exchange2013 and up) of gathering email addresses from the Global Address List. If this does not succeed the script will attempt to connect to Exchange Web Services where it will attempt to gather the Global Address List. 
+```PowerShell
+Get-GlobalAddressList -ExchHostname mail.domain.com -UserName domain\username -Password Fall2016 -OutFile global-address-list.txt
+```
+**Invoke-PasswordSprayOWA** is a module that will attempt to connect to an Outlook Web Access portal and perform a password spraying attack using a userlist and a single password. PLEASE BE CAREFUL NOT TO LOCKOUT ACCOUNTS!
+```PowerShell
+Invoke-PasswordSprayOWA -ExchHostname mail.domain.com -UserList .\userlist.txt -Password Fall2016 -Threads 15 -OutFile owa-sprayed-creds.txt
+```
+**Invoke-PasswordSprayEWS** is a module that will attempt to connect to an Exchange Web Services portal and perform a password spraying attack using a userlist and a single password. PLEASE BE CAREFUL NOT TO LOCKOUT ACCOUNTS!
+```PowerShell
+Invoke-PasswordSprayEWS -ExchHostname mail.domain.com -UserList .\userlist.txt -Password Fall2016 -Threads 15 -OutFile sprayed-ews-creds.txt
+```
+
+
