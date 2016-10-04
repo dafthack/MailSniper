@@ -1495,9 +1495,9 @@ $SleepTimer = 200
         $fullresults = @()
 While ($(Get-Job -State Running).count -gt 0){
     $RunningJobs = ""
-    ForEach ($Job  in $(Get-Job -state running)){$RunningJobs += ", $($Job.name)"}
+    ForEach ($Job in $(Get-Job -state running)){$RunningJobs += ", $($Job.name)"}
     $RunningJobs = $RunningJobs.Substring(2)
-    Write-Progress  -Activity "Password Spraying the OWA portal at https://$ExchHostname/owa/. Sit tight..." -Status "$($(Get-Job -State Running).count) threads remaining" -PercentComplete ($(Get-Job -State Completed).count / $(Get-Job).count * 100)
+    Write-Progress -Activity "Password Spraying the OWA portal at https://$ExchHostname/owa/. Sit tight..." -Status "$($(Get-Job -State Running).count) threads remaining" -PercentComplete ($(Get-Job -State Completed).count / $(Get-Job).count * 100)
     If ($(New-TimeSpan $Complete $(Get-Date)).totalseconds -ge $MaxWaitAtEnd){"Killing all jobs still running . . .";Get-Job -State Running | Remove-Job -Force}
     Start-Sleep -Milliseconds $SleepTimer
     ForEach($Job in Get-Job){
