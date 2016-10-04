@@ -1463,7 +1463,7 @@ function Invoke-UsernameHarvestOWA {
 
     $Users = @()
 
-    #This "primes" the username harvesting. Firstname in the list produces weird results, so use a throwaway
+    #This "primes" the username harvesting. Firstname in the list produces weird results, so use a throwaway.
     $Users += "throwaway1"
 
     $Users += $args[0]
