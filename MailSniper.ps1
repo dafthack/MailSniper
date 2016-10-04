@@ -1331,7 +1331,7 @@ function Invoke-UsernameHarvestOWA {
     This module will attempt to connect to an Outlook Web Access portal and harvest valid usernames. PLEASE BE CAREFUL NOT TO LOCKOUT ACCOUNTS!
 
     MailSniper Function: Invoke-UsernameHarvestOWA
-    Author: Brian Fehrman (@fullmetalcache) and Beau Bullock (@dafthack)
+    Author: Brian Fehrman (@fullmetalcache) and Beau Bullock (@dafthack) (mostly a copy and paste of Beau's Invoke-PasswordSpray OWA function)
     License: BSD 3-Clause
     Required Dependencies: None
     Optional Dependencies: None
