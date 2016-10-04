@@ -1477,7 +1477,7 @@ function Invoke-UsernameHarvestOWA {
         $POSTparams = @{destination="$OWAURL2";flags='4';forcedownlevel='0';username="$Username";password="$Password";isUtf8='1'}
         $Start = Get-Date
         $owalogin = Invoke-WebRequest -Uri $OWAURL -Method POST -Body $POSTparams -MaximumRedirection 0 -SessionVariable owasession -ErrorAction SilentlyContinue 
-        $TimeTaken = ((Get-Date)  $Start).TotalMilliseconds 
+        $TimeTaken = ((Get-Date) $Start).TotalMilliseconds 
         $out = $owalogin.RawContent
         #Looking in the results for the OWA cadata cookie to determine whether authentication was successful or not.
         if ($TimeTaken -le 700)
