@@ -581,9 +581,11 @@ function Invoke-SelfSearch{
     $service.AutoDiscoverUrl($Mailbox, {$true})
   }    
 
-
     Write-Output ("[*] Now searching mailbox: $Mailbox for the terms $Terms.")
-    $rootFolder = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,'MsgFolderRoot')
+    $msgfolderroot = [Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::MsgFolderRoot
+    $mbx = New-Object Microsoft.Exchange.WebServices.Data.Mailbox( $Mailbox )
+    $FolderId = New-Object Microsoft.Exchange.WebServices.Data.FolderId( $msgfolderroot, $mbx)  
+    $rootFolder = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,$FolderId)
     $folderView = [Microsoft.Exchange.WebServices.Data.FolderView]100
     $folderView.Traversal='Deep'
     $rootFolder.Load()
@@ -650,6 +652,177 @@ function Invoke-SelfSearch{
 
 }
 
+function Get-MailboxFolders{
+
+<#
+  .SYNOPSIS
+
+    This module will connect to a Microsoft Exchange server using Exchange Web Services to gather a list of folders from the current user's mailbox. 
+
+    MailSniper Function: Get-MailboxFolders
+    Author: Beau Bullock (@dafthack)
+    License: BSD 3-Clause
+    Required Dependencies: None
+    Optional Dependencies: None
+
+  .DESCRIPTION
+
+    This module will connect to a Microsoft Exchange server using Exchange Web Services to gather a list of folders from the current user's mailbox. 
+  
+  .PARAMETER ExchHostname
+
+    The hostname of the Exchange server to connect to.
+
+  .PARAMETER Mailbox
+
+    Email address of the current user the PowerShell process is running as.
+
+  .PARAMETER ExchangeVersion
+
+    In order to communicate with Exchange Web Services the correct version of Microsoft Exchange Server must be specified. By default this script tries "Exchange2010". Additional options to try are  Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1.
+  
+  .PARAMETER OutFile
+
+    Outputs the results of the search to a file.
+
+  .PARAMETER Remote
+
+    A switch for performing the search remotely across the Internet against a system hosting EWS. Instead of utilizing the current user's credentials if the -Remote option is added a new credential box will pop up for accessing the remote EWS service. 
+  
+  .EXAMPLE
+
+    C:\PS> Get-MailboxFolders -Mailbox current-user@domain.com 
+
+    Description
+    -----------
+    This command will connect to the Exchange server autodiscovered from the email address entered using Exchange Web Services and enumerate all of the folders and subfolders from the mailbox.
+
+  .EXAMPLE
+
+    C:\PS> Get-MailboxFolders -Mailbox current-user@domain.com -ExchHostname mail.domain.com -OutFile folders.txt -Remote
+
+    Description
+    -----------
+    This command will connect to the remote Exchange server specified with -ExchHostname using Exchange Web Services and enumerate all of the folders and subfolders from the mailbox and output to a file called 'folders.txt'. Since the -Remote flag was passed a new credential box will popup asking for the user's credentials to authenticate to the remote EWS. The username should be the user's domain login (i.e. domain\username) but depending on how internal UPN's were setup it might accept the user's email address (i.e. user@domain.com).
+
+#>
+  Param(
+
+    [Parameter(Position = 0, Mandatory = $true)]
+    [string]
+    $Mailbox = "",
+
+    [Parameter(Position = 1, Mandatory = $false)]
+    [system.URI]
+    $ExchHostname = "",
+
+    [Parameter(Position = 2, Mandatory = $False)]
+    [string]
+    $OutFile = "",
+
+    [Parameter(Position = 3, Mandatory = $False)]
+    [string]
+    $ExchangeVersion = "Exchange2010",
+
+    [Parameter(Position = 4, Mandatory = $False)]
+    [switch]
+    $Remote
+
+  )
+  #Running the LoadEWSDLL function to load the required Exchange Web Services dll
+  LoadEWSDLL
+
+  Write-Output "[*] Trying Exchange version $ExchangeVersion"
+  $ServiceExchangeVersion = [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::$ExchangeVersion
+
+  $service = New-Object Microsoft.Exchange.WebServices.Data.ExchangeService($ServiceExchangeVersion)
+
+  #If the -Remote flag was passed prompt for the user's domain credentials.
+  if ($Remote)
+  {
+    $remotecred = Get-Credential
+    $service.UseDefaultCredentials = $false
+    $service.Credentials = $remotecred.GetNetworkCredential()
+  }
+  else
+  {
+    #Using current user's credentials to connect to EWS
+    $service.UseDefaultCredentials = $true
+  }
+
+  ## Choose to ignore any SSL Warning issues caused by Self Signed Certificates     
+  ## Code From http://poshcode.org/624
+
+  ## Create a compilation environment
+  $Provider=New-Object Microsoft.CSharp.CSharpCodeProvider
+  $Compiler=$Provider.CreateCompiler()
+  $Params=New-Object System.CodeDom.Compiler.CompilerParameters
+  $Params.GenerateExecutable=$False
+  $Params.GenerateInMemory=$True
+  $Params.IncludeDebugInformation=$False
+  $Params.ReferencedAssemblies.Add("System.DLL") > $null
+
+  $TASource=@'
+    namespace Local.ToolkitExtensions.Net.CertificatePolicy{
+      public class TrustAll : System.Net.ICertificatePolicy {
+        public TrustAll() { 
+        }
+        public bool CheckValidationResult(System.Net.ServicePoint sp,
+          System.Security.Cryptography.X509Certificates.X509Certificate cert, 
+          System.Net.WebRequest req, int problem) {
+          return true;
+        }
+      }
+    }
+'@ 
+  $TAResults=$Provider.CompileAssemblyFromSource($Params,$TASource)
+  $TAAssembly=$TAResults.CompiledAssembly
+
+  ## We now create an instance of the TrustAll and attach it to the ServicePointManager
+  $TrustAll=$TAAssembly.CreateInstance("Local.ToolkitExtensions.Net.CertificatePolicy.TrustAll")
+  [System.Net.ServicePointManager]::CertificatePolicy=$TrustAll
+
+  ## end code from http://poshcode.org/624
+    
+  if ($ExchHostname -ne "")
+  {
+    ("[*] Using EWS URL " + "https://" + $ExchHostname + "/EWS/Exchange.asmx")
+    $service.Url = new-object System.Uri(("https://" + $ExchHostname + "/EWS/Exchange.asmx"))
+  }
+  else
+  {
+    ("[*] Autodiscovering email server for " + $Mailbox + "...")
+    $service.AutoDiscoverUrl($Mailbox, {$true})
+  }    
+
+    Write-Output ("[*] Now searching mailbox: $Mailbox for folders.")
+    $msgfolderroot = [Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::MsgFolderRoot
+    $mbx = New-Object Microsoft.Exchange.WebServices.Data.Mailbox( $Mailbox )
+    $FolderId = New-Object Microsoft.Exchange.WebServices.Data.FolderId( $msgfolderroot, $mbx)  
+    $rootFolder = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,$FolderId)
+    $folderView = [Microsoft.Exchange.WebServices.Data.FolderView]100
+    $folderView.Traversal='Deep'
+    $rootFolder.Load()
+    $CustomFolderObj = $rootFolder.FindFolders($folderView) 
+    $AllFolders = @()
+    Foreach($foldername in $CustomFolderObj)
+    {
+        Write-Output "[***] Found folder: $($foldername.DisplayName)"
+        $AllFolders += $foldername.DisplayName
+    }
+    Write-Output ("[*] A total of " + $AllFolders.count + " folders were discovered.")
+
+    if ($OutFile -ne "")
+    {
+      $AllFolders | Out-File -Encoding ascii $OutFile
+    }
+
+     
+  #Removing EWS DLL
+  Start-Process -NoNewWindow powershell.exe -argument "-command Start-Sleep -m 250; Remove-Item $env:temp\ews.dll -Force"
+  exit
+
+}
 
 function Get-GlobalAddressList{
 
