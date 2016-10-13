@@ -42,6 +42,7 @@ ExchangeVersion       - Specify the version of Exchange server to connect to. By
 AdminUserName         - The username of an Exchange administator (i.e. member of the "Exchange Organization Administrators" or "Organization Management" group) including the domain (i.e. domain\adminusername).
 AdminPassword         - The password to the Exchange administator (i.e. member of the "Exchange Organization Administrators" or "Organization Management" group) account specified with AdminUserName.
 EmailList             - A text file listing email addresses to search (one per line).
+Folder                - The folder within each mailbox to search. By default the script only searches the "Inbox" folder. By specifying 'all' for the Folder option all of the folders including subfolders of the specified mailbox will be searched.
 ```
 ###Invoke-SelfSearch Options
 ```
@@ -52,11 +53,16 @@ Terms                 - Certain terms to search through each email subject and b
 OutputCsv             - Outputs the results of the search to a CSV file.
 ExchangeVersion       - Specify the version of Exchange server to connect to. By default the script tries Exchange2010.
 Remote                - A switch for performing the search remotely across the Internet against a system hosting EWS. Instead of utilizing the current user's credentials if the -Remote option is added a new credential box will pop up for accessing the remote EWS service. 
+Folder                - The folder within each mailbox to search. By default the script only searches the "Inbox" folder. By specifying 'all' for the Folder option all of the folders including subfolders of the specified mailbox will be searched.
 ```
 ## Additional MailSniper Modules
 **Get-GlobalAddressList** is a module that will first attempt to connect to an Outlook Web Access portal and utilize the "FindPeople" method (only available in Exchange2013 and up) of gathering email addresses from the Global Address List. If this does not succeed the script will attempt to connect to Exchange Web Services where it will attempt to gather the Global Address List. 
 ```PowerShell
 Get-GlobalAddressList -ExchHostname mail.domain.com -UserName domain\username -Password Fall2016 -OutFile global-address-list.txt
+```
+**Get-MailboxFolders** is a module that will connect to a Microsoft Exchange server using Exchange Web Services to gather a list of folders from the current user's mailbox. 
+```PowerShell
+Get-MailboxFolders -Mailbox current-user@domain.com
 ```
 **Invoke-PasswordSprayOWA** is a module that will attempt to connect to an Outlook Web Access portal and perform a password spraying attack using a userlist and a single password. PLEASE BE CAREFUL NOT TO LOCKOUT ACCOUNTS!
 ```PowerShell
