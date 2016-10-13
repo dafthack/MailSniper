@@ -54,6 +54,10 @@ function Invoke-GlobalMailSearch{
 
     A text file listing email addresses to search (one per line).
 
+  .PARAMETER Folder
+
+    The folder of each mailbox to search. By default the script only searches the "Inbox" folder. By specifying 'all' for the Folder option all of the folders including subfolders of the specified mailbox will be searched.
+
   .EXAMPLE
 
     C:\PS> Invoke-GlobalMailSearch -ImpersonationAccount current-username -ExchHostname Exch01 -OutputCsv global-email-search.csv
@@ -77,6 +81,14 @@ function Invoke-GlobalMailSearch{
     Description
     -----------
     This command will connect to the Exchange server located at 'Exch01' and use the Exchange admin username and password specified in the command line. A PS remoting session is setup to the Exchange server where the ApplicationImpersonation role is then granted to the "current-username" user. A list of all email addresses in the domain is then gathered, followed by a connection to Exchange Web Services using an Exchange Version of Exchange2010 as "current-username" where by default 100 of the latest emails from each mailbox will be searched through for the terms "*pass*","*creds*","*credentials*" and output to a CSV called global-email-search.csv.
+
+  .EXAMPLE
+
+    C:\PS> Invoke-GlobalMailSearch -ImpersonationAccount current-username -AutoDiscoverEmail user@domain.com -Folder all
+
+    Description
+    -----------
+    This command will connect to the Exchange server autodiscovered from the email address entered, and prompt for administrative credentials. Once administrative credentials have been entered a PS remoting session is setup to the Exchange server where the ApplicationImpersonation role is then granted to the "current-username" user. A list of all email addresses in the domain is then gathered, followed by a connection to Exchange Web Services as "current-username" where 100 of the latest emails from each folder including subfolders in each mailbox will be searched through for the terms "*passwords*","*super secret*","*industrial control systems*","*scada*","*launch codes*".
 
 #>
 
@@ -120,7 +132,11 @@ function Invoke-GlobalMailSearch{
 
     [Parameter(Position = 9, Mandatory = $False)]
     [string]
-    $EmailList = ""
+    $EmailList = "",
+
+    [Parameter(Position = 10, Mandatory = $False)]
+    [string]
+    $Folder = "Inbox"
   )
 
   #Check for a method of connecting to the Exchange Server
@@ -285,38 +301,46 @@ $TASource=@'
   {
     $i++
         Write-Host -NoNewLine ("[" + $i + "/" + $AllMailboxes.count + "]") -foregroundcolor "yellow"; Write-Output (" Using " + $ImpersonationAccount + " to impersonate " + $Mailbox)
-
+    Write-Output ("[*] Now searching mailbox: $Mailbox for the terms $Terms.")
     $service.ImpersonatedUserId = New-Object Microsoft.Exchange.WebServices.Data.ImpersonatedUserId([Microsoft.Exchange.WebServices.Data.ConnectingIdType]::SmtpAddress,$Mailbox ); 
-    $rootfolder = [Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::Inbox
-    $mbx = New-Object Microsoft.Exchange.WebServices.Data.Mailbox( $Mailbox )
-    $FolderId = New-Object Microsoft.Exchange.WebServices.Data.FolderId( $rootfolder, $mbx)
-    try
+    $rootFolder = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,'MsgFolderRoot')
+    $folderView = [Microsoft.Exchange.WebServices.Data.FolderView]100
+    $folderView.Traversal='Deep'
+    $rootFolder.Load()
+    if ($Folder -ne "all")
     {
-      $Inbox = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,$FolderId)
+      $CustomFolderObj = $rootFolder.FindFolders($folderView) | Where-Object { $_.DisplayName -eq $Folder }
     }
-    catch
+    else
     {
-      $ErrorMessage = $_.Exception.Message
-      if ($ErrorMessage -like "*Exchange Server doesn't support the requested version.*")
-      {
-        Write-Host -foregroundcolor "red" "[*] ERROR: The connection to Exchange failed using Exchange Version $ExchangeVersion."
-        Write-Host -foregroundcolor "red" "[*] Try setting the -ExchangeVersion flag to the Exchange version of the server."
-        Write-Host -foregroundcolor "red" "[*] Some options to try: Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1."
-        break
-      }
+      $CustomFolderObj = $rootFolder.FindFolders($folderView) 
     }
-
-
-    #$view = New-Object Microsoft.Exchange.WebServices.Data.ItemView(10)
-    #$view.SearchFilter = New-Object Microsoft.Exchange.WebServices.Data.SearchFilter+ContainsSubstring([Microsoft.Exchange.WebServices.Data.EmailMessageSchema]::Body, "password");
-    #$findResults = $service.FindItems([Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::Inbox,$view)
-    #$findResults
-
-    #Set the property set so that the body of emails doesn't come back in html format. Only clear text.
-    $PropertySet = New-Object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.BasePropertySet]::FirstClassProperties)
-    $PropertySet.RequestedBodyType = [Microsoft.Exchange.WebServices.Data.BodyType]::Text
+    $PostSearchList = @() 
+    Foreach($foldername in $CustomFolderObj)
+    {
+        Write-Output "[***] Found folder: $($foldername.DisplayName)"
     
-    #Specify the number of emails to grab from each mailbox    
+      try
+      {
+        $Inbox = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,$foldername.Id)
+      }
+      catch
+      {
+        $ErrorMessage = $_.Exception.Message
+        if ($ErrorMessage -like "*Exchange Server doesn't support the requested version.*")
+        {
+          Write-Output "[*] ERROR: The connection to Exchange failed using Exchange Version $ExchangeVersion."
+          Write-Output "[*] Try setting the -ExchangeVersion flag to the Exchange version of the server."
+          Write-Output "[*] Some options to try: Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1."
+          break
+        }
+      }
+
+
+      $PropertySet = New-Object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.BasePropertySet]::FirstClassProperties)
+      $PropertySet.RequestedBodyType = [Microsoft.Exchange.WebServices.Data.BodyType]::Text
+     
+   
     try 
     {
       $mails = $Inbox.FindItems($MailsPerUser)
@@ -324,26 +348,25 @@ $TASource=@'
     catch [Exception]{
       Write-Host -foregroundcolor "red" ("[*] Warning: " + $Mailbox + " does not appear to have a mailbox.")
       continue
-    }
-    $PostSearchList = @()
-
-    #For each mail item in the mailbox search the body and subject for specific terms    
-    foreach ($item in $mails.Items)
-    {    
-      $item.Load($PropertySet) 
-      foreach($specificterm in $Terms)
-      {
-        if ($item.Body.Text -like $specificterm)
+    }   
+      #For each mail item in the mailbox search the body and subject for specific terms  
+      foreach ($item in $mails.Items)
+      {    
+        $item.Load($PropertySet)
+        foreach($specificterm in $Terms)
         {
+          if ($item.Body.Text -like $specificterm)
+          {
           $PostSearchList += $item
-        }
-        elseif ($item.Subject -like $specificterm)
-        {
+          }
+          elseif ($item.Subject -like $specificterm)
+          {
           $PostSearchList += $item
+          }
         }
       }
     }
-
+       
     if ($OutputCsv -ne "")
     { 
       $PostSearchList | Select-Object Sender,ReceivedBy,Subject,Body | Export-Csv "temp-$OutputCsv"
@@ -420,6 +443,10 @@ function Invoke-SelfSearch{
 
     A switch for performing the search remotely across the Internet against a system hosting EWS. Instead of utilizing the current user's credentials if the -Remote option is added a new credential box will pop up for accessing the remote EWS service. 
   
+  .PARAMETER Folder
+
+    The folder of each mailbox to search. By default the script only searches the "Inbox" folder. By specifying 'all' for the Folder option all of the folders including subfolders of the specified mailbox will be searched.
+
   .EXAMPLE
 
     C:\PS> Invoke-SelfSearch -Mailbox current-user@domain.com 
@@ -443,6 +470,15 @@ function Invoke-SelfSearch{
     Description
     -----------
     This command will connect to the remote Exchange server specified with -ExchHostname using Exchange Web Services where by default 100 of the latest emails from the "Mailbox" will be searched through for the terms "*pass*","*creds*","*credentials*". Since the -Remote flag was passed a new credential box will popup asking for the user's credentials to authenticate to the remote EWS. The username should be the user's domain login (i.e. domain\username) but depending on how internal UPN's were setup it might accept the user's email address (i.e. user@domain.com).
+
+  .EXAMPLE
+
+    C:\PS> Invoke-SelfSearch -Mailbox current-user@domain.com -Folder all
+
+    Description
+    -----------
+    This command will connect to the Exchange server autodiscovered from the email address entered using Exchange Web Services where by default 100 of the latest emails in all of the folders including subfolders from the "Mailbox" will be searched through for the terms "*pass*","*creds*","*credentials*".
+
 
 #>
   Param(
@@ -472,7 +508,11 @@ function Invoke-SelfSearch{
 
     [Parameter(Position = 6, Mandatory = $False)]
     [switch]
-    $Remote
+    $Remote,
+
+    [Parameter(Position = 7, Mandatory = $False)]
+    [string]
+    $Folder = 'Inbox'
 
   )
   #Running the LoadEWSDLL function to load the required Exchange Web Services dll
@@ -541,48 +581,64 @@ function Invoke-SelfSearch{
     $service.AutoDiscoverUrl($Mailbox, {$true})
   }    
 
- 
-  $rootfolder = [Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::Inbox
-  $mbx = New-Object Microsoft.Exchange.WebServices.Data.Mailbox( $Mailbox )
-  $FolderId = New-Object Microsoft.Exchange.WebServices.Data.FolderId( $rootfolder, $mbx)   
-  try
-  {
-    $Inbox = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,$FolderId)
-  }
-  catch
-  {
-    $ErrorMessage = $_.Exception.Message
-    if ($ErrorMessage -like "*Exchange Server doesn't support the requested version.*")
-    {
-      Write-Output "[*] ERROR: The connection to Exchange failed using Exchange Version $ExchangeVersion."
-      Write-Output "[*] Try setting the -ExchangeVersion flag to the Exchange version of the server."
-      Write-Output "[*] Some options to try: Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1."
-      break
-    }
-  }
 
-  Write-Output "[*] Now searching the mailbox of $Mailbox for the terms $Terms."
- 
-  $PropertySet = New-Object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.BasePropertySet]::FirstClassProperties)
-  $PropertySet.RequestedBodyType = [Microsoft.Exchange.WebServices.Data.BodyType]::Text
- 
-  $mails = $Inbox.FindItems($MailsPerUser)
-  $PostSearchList = @()    
-  foreach ($item in $mails.Items)
-  {    
-      $item.Load($PropertySet)
-      foreach($specificterm in $Terms)
+    Write-Output ("[*] Now searching mailbox: $Mailbox for the terms $Terms.")
+    $rootFolder = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,'MsgFolderRoot')
+    $folderView = [Microsoft.Exchange.WebServices.Data.FolderView]100
+    $folderView.Traversal='Deep'
+    $rootFolder.Load()
+    if ($Folder -ne "all")
+    {
+      $CustomFolderObj = $rootFolder.FindFolders($folderView) | Where-Object { $_.DisplayName -eq $Folder }
+    }
+    else
+    {
+      $CustomFolderObj = $rootFolder.FindFolders($folderView) 
+    }
+    $PostSearchList = @() 
+    Foreach($foldername in $CustomFolderObj)
+    {
+        Write-Output "[***] Found folder: $($foldername.DisplayName)"
+    
+      try
       {
-        if ($item.Body.Text -like $specificterm)
+        $Inbox = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,$foldername.Id)
+      }
+      catch
+      {
+        $ErrorMessage = $_.Exception.Message
+        if ($ErrorMessage -like "*Exchange Server doesn't support the requested version.*")
         {
-        $PostSearchList += $item
-        }
-        elseif ($item.Subject -like $specificterm)
-        {
-        $PostSearchList += $item
+          Write-Output "[*] ERROR: The connection to Exchange failed using Exchange Version $ExchangeVersion."
+          Write-Output "[*] Try setting the -ExchangeVersion flag to the Exchange version of the server."
+          Write-Output "[*] Some options to try: Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1."
+          break
         }
       }
-  }
+     
+      $PropertySet = New-Object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.BasePropertySet]::FirstClassProperties)
+      $PropertySet.RequestedBodyType = [Microsoft.Exchange.WebServices.Data.BodyType]::Text
+     
+      $mails = $Inbox.FindItems($MailsPerUser)   
+      foreach ($item in $mails.Items)
+      {    
+        $item.Load($PropertySet)
+        foreach($specificterm in $Terms)
+        {
+          if ($item.Body.Text -like $specificterm)
+          {
+          $PostSearchList += $item
+          }
+          elseif ($item.Subject -like $specificterm)
+          {
+          $PostSearchList += $item
+          }
+        }
+      }
+    }
+  
+
+
   $PostSearchList | ft -Property Sender,ReceivedBy,Subject,Body
   if ($OutputCsv -ne "")
   { 
