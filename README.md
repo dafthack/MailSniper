@@ -44,6 +44,8 @@ AdminPassword         - The password to the Exchange administator (i.e. member o
 EmailList             - A text file listing email addresses to search (one per line).
 Folder                - The folder within each mailbox to search. By default the script only searches the "Inbox" folder. By specifying 'all' for the Folder option all of the folders including subfolders of the specified mailbox will be searched.
 Regex                 - The regex parameter allows for the use of regular expressions when doing searches. This will override the -Terms flag.
+CheckAttachments      - If the CheckAttachments option is added MailSniper will attempt to search through the contents of email attachements in addition to the default body/subject. These attachments can be downloaded by specifying the -DownloadDir option. It only searches attachments that are of extension .txt, .htm, .pdf, .ps1, .doc, .xls, .bat, and .msg currently.
+DownloadDir           - When the CheckAttachments option finds attachments that are matches to the search terms the files can be downloaded to a specific location using the -DownloadDir option. 
 ```
 ###Invoke-SelfSearch Options
 ```
@@ -56,6 +58,8 @@ ExchangeVersion       - Specify the version of Exchange server to connect to. By
 Remote                - A switch for performing the search remotely across the Internet against a system hosting EWS. Instead of utilizing the current user's credentials if the -Remote option is added a new credential box will pop up for accessing the remote EWS service. 
 Folder                - The folder within each mailbox to search. By default the script only searches the "Inbox" folder. By specifying 'all' for the Folder option all of the folders including subfolders of the specified mailbox will be searched.
 Regex                 - The regex parameter allows for the use of regular expressions when doing searches. This will override the -Terms flag.
+CheckAttachments      - If the CheckAttachments option is added MailSniper will attempt to search through the contents of email attachements in addition to the default body/subject. These attachments can be downloaded by specifying the -DownloadDir option. It only searches attachments that are of extension .txt, .htm, .pdf, .ps1, .doc, .xls, .bat, and .msg currently.
+DownloadDir           - When the CheckAttachments option finds attachments that are matches to the search terms the files can be downloaded to a specific location using the -DownloadDir option. 
 ```
 ## Additional MailSniper Modules
 **Get-GlobalAddressList** is a module that will first attempt to connect to an Outlook Web Access portal and utilize the "FindPeople" method (only available in Exchange2013 and up) of gathering email addresses from the Global Address List. If this does not succeed the script will attempt to connect to Exchange Web Services where it will attempt to gather the Global Address List. 
