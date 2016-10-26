@@ -62,6 +62,15 @@ function Invoke-GlobalMailSearch{
 
     The regex parameter allows for the use of regular expressions when doing searches. This will override the -Terms flag. 
 
+  .PARAMETER CheckAttachments
+
+    If the CheckAttachments option is added MailSniper will attempt to search through the contents of email attachements in addition to the default body/subject. These attachments can be downloaded by specifying the -DownloadDir option. It only searches attachments that are of extension .txt, .htm, .pdf, .ps1, .doc, .xls, .bat, and .msg currently.
+
+  .PARAMETER DownloadDir
+
+    When the CheckAttachments option finds attachments that are matches to the search terms the files can be downloaded to a specific location using the -DownloadDir option. 
+
+
   .EXAMPLE
 
     C:\PS> Invoke-GlobalMailSearch -ImpersonationAccount current-username -ExchHostname Exch01 -OutputCsv global-email-search.csv
@@ -102,6 +111,13 @@ function Invoke-GlobalMailSearch{
     -----------
     This command will utilize a Regex search instead of the standard Terms functionality. Specifically, the regular expression in the example above will attempt to match on valid VISA, Mastercard, and American Express credit card numbers in the body and subject's of emails.
 
+  .EXAMPLE
+
+    C:\PS> Invoke-GlobalMailSearch -ImpersonationAccount current-username -AutoDiscoverEmail current-user@domain.com -CheckAttachments -DownloadDir C:\temp
+
+    Description
+    -----------
+    This command will search through all of the attachments to emails as well as the default body/subject for specific terms and download any attachments found to the C:\temp directory.
 #>
 
 
@@ -152,7 +168,15 @@ function Invoke-GlobalMailSearch{
 
     [Parameter(Position = 11, Mandatory = $False)]
     [string]
-    $Regex = ''
+    $Regex = '',
+
+    [Parameter(Position = 12, Mandatory = $False)]
+    [switch]
+    $CheckAttachments,
+
+    [Parameter(Position = 13, Mandatory = $False)]
+    [string]
+    $DownloadDir = ""
   )
 
   #Check for a method of connecting to the Exchange Server
@@ -404,6 +428,80 @@ $TASource=@'
             }
           }    
         }
+        if ($CheckAttachments)
+        {
+          foreach($attachment in $item.Attachments)
+          {
+            if($attachment -is [Microsoft.Exchange.WebServices.Data.FileAttachment])
+            {
+              if($attachment.Name.Contains(".txt") -Or $attachment.Name.Contains(".htm") -Or $attachment.Name.Contains(".pdf") -Or $attachment.Name.Contains(".ps1") -Or $attachment.Name.Contains(".doc") -Or $attachment.Name.Contains(".xls") -Or $attachment.Name.Contains(".bat") -Or $attachment.Name.Contains(".msg"))
+              {
+                $attachment.Load() | Out-Null
+                $plaintext = [System.Text.Encoding]::ASCII.GetString($attachment.Content)
+                if ($Regex -eq "")
+                {
+                  foreach($specificterm in $Terms)
+                  {
+                    if ($plaintext -like $specificterm)
+                    {
+                      Write-Output ("Found attachment " + $attachment.Name)
+                      $PostSearchList += $item
+                      if ($DownloadDir -ne "")
+                      { 
+                        $prefix = Get-Random
+                        $DownloadFile = new-object System.IO.FileStream(($DownloadDir + "\" + $prefix + "-" + $attachment.Name.ToString()), [System.IO.FileMode]::Create)
+                        $DownloadFile.Write($attachment.Content, 0, $attachment.Content.Length)
+                        $DownloadFile.Close()
+                      }
+                    }
+                    elseif ($plaintext -like $specificterm)
+                    {
+                      Write-Output ("Found attachment " + $attachment.Name)
+                      $PostSearchList += $item
+                      if ($DownloadDir -ne "")
+                      { 
+                        $prefix = Get-Random
+                        $DownloadFile = new-object System.IO.FileStream(($DownloadDir + "\" + $prefix + $attachment.Name.ToString()), [System.IO.FileMode]::Create)
+                        $DownloadFile.Write($attachment.Content, 0, $attachment.Content.Length)
+                        $DownloadFile.Close()
+                      }
+                    }
+                  }
+                }
+                else 
+                {
+                  foreach($regularexpresion in $Regex)
+                  {
+                    if ($plaintext -match $regularexpresion)
+                    {
+                    Write-Output ("Found attachment " + $attachment.Name)
+                    $PostSearchList += $item
+                      if ($DownloadDir -ne "")
+                      { 
+                        $prefix = Get-Random
+                        $DownloadFile = new-object System.IO.FileStream(($DownloadDir + "\" + $prefix + $attachment.Name.ToString()), [System.IO.FileMode]::Create)
+                        $DownloadFile.Write($attachment.Content, 0, $attachment.Content.Length)
+                        $DownloadFile.Close()
+                      }
+                    }
+                    elseif ($plaintext -match $regularexpresion)
+                    {
+                    Write-Output ("Found attachment " + $attachment.Name)
+                    $PostSearchList += $item
+                      if ($DownloadDir -ne "")
+                      { 
+                        $prefix = Get-Random
+                        $DownloadFile = new-object System.IO.FileStream(($DownloadDir + "\" + $prefix + $attachment.Name.ToString()), [System.IO.FileMode]::Create)
+                        $DownloadFile.Write($attachment.Content, 0, $attachment.Content.Length)
+                        $DownloadFile.Close()
+                      }
+                    }
+                  }    
+                }
+              }
+            }
+          }
+        }
       }
 
     }
@@ -488,6 +586,15 @@ function Invoke-SelfSearch{
 
     The regex parameter allows for the use of regular expressions when doing searches. This will override the -Terms flag. 
 
+  .PARAMETER CheckAttachments
+
+    If the CheckAttachments option is added MailSniper will attempt to search through the contents of email attachements in addition to the default body/subject. These attachments can be downloaded by specifying the -DownloadDir option. It only searches attachments that are of extension .txt, .htm, .pdf, .ps1, .doc, .xls, .bat, and .msg currently.
+
+  .PARAMETER DownloadDir
+
+    When the CheckAttachments option finds attachments that are matches to the search terms the files can be downloaded to a specific location using the -DownloadDir option.
+      
+
   .EXAMPLE
 
     C:\PS> Invoke-SelfSearch -Mailbox current-user@domain.com 
@@ -528,6 +635,13 @@ function Invoke-SelfSearch{
     -----------
     This command will connect to the Exchange server autodiscovered from the email address entered using Exchange Web Services where by default 100 of the latest emails in all of the folders including subfolders from the "Mailbox" will be searched through for the terms "*pass*","*creds*","*credentials*".
 
+  .EXAMPLE
+
+    C:\PS> Invoke-SelfSearch -Mailbox current-user@domain.com -CheckAttachments -DownloadDir C:\temp
+
+    Description
+    -----------
+    This command will search through all of the attachments to emails as well as the default body/subject for specific terms and download any attachments found to the C:\temp directory.
 
 #>
   Param(
@@ -565,9 +679,15 @@ function Invoke-SelfSearch{
 
     [Parameter(Position = 8, Mandatory = $False)]
     [string]
-    $Regex = ''
+    $Regex = '',
 
+    [Parameter(Position = 9, Mandatory = $False)]
+    [switch]
+    $CheckAttachments,
 
+    [Parameter(Position = 10, Mandatory = $False)]
+    [string]
+    $DownloadDir = ""
   )
   #Running the LoadEWSDLL function to load the required Exchange Web Services dll
   LoadEWSDLL
@@ -715,6 +835,80 @@ function Invoke-SelfSearch{
             $PostSearchList += $item
             }
           }    
+        }
+        if ($CheckAttachments)
+        {
+          foreach($attachment in $item.Attachments)
+          {
+            if($attachment -is [Microsoft.Exchange.WebServices.Data.FileAttachment])
+            {
+              if($attachment.Name.Contains(".txt") -Or $attachment.Name.Contains(".htm") -Or $attachment.Name.Contains(".pdf") -Or $attachment.Name.Contains(".ps1") -Or $attachment.Name.Contains(".doc") -Or $attachment.Name.Contains(".xls") -Or $attachment.Name.Contains(".bat") -Or $attachment.Name.Contains(".msg"))
+              {
+                $attachment.Load() | Out-Null
+                $plaintext = [System.Text.Encoding]::ASCII.GetString($attachment.Content)
+                if ($Regex -eq "")
+                {
+                  foreach($specificterm in $Terms)
+                  {
+                    if ($plaintext -like $specificterm)
+                    {
+                      Write-Output ("Found attachment " + $attachment.Name)
+                      $PostSearchList += $item
+                      if ($DownloadDir -ne "")
+                      { 
+                        $prefix = Get-Random
+                        $DownloadFile = new-object System.IO.FileStream(($DownloadDir + "\" + $prefix + "-" + $attachment.Name.ToString()), [System.IO.FileMode]::Create)
+                        $DownloadFile.Write($attachment.Content, 0, $attachment.Content.Length)
+                        $DownloadFile.Close()
+                      }
+                    }
+                    elseif ($plaintext -like $specificterm)
+                    {
+                      Write-Output ("Found attachment " + $attachment.Name)
+                      $PostSearchList += $item
+                      if ($DownloadDir -ne "")
+                      { 
+                        $prefix = Get-Random
+                        $DownloadFile = new-object System.IO.FileStream(($DownloadDir + "\" + $prefix + $attachment.Name.ToString()), [System.IO.FileMode]::Create)
+                        $DownloadFile.Write($attachment.Content, 0, $attachment.Content.Length)
+                        $DownloadFile.Close()
+                      }
+                    }
+                  }
+                }
+                else 
+                {
+                  foreach($regularexpresion in $Regex)
+                  {
+                    if ($plaintext -match $regularexpresion)
+                    {
+                    Write-Output ("Found attachment " + $attachment.Name)
+                    $PostSearchList += $item
+                      if ($DownloadDir -ne "")
+                      { 
+                        $prefix = Get-Random
+                        $DownloadFile = new-object System.IO.FileStream(($DownloadDir + "\" + $prefix + $attachment.Name.ToString()), [System.IO.FileMode]::Create)
+                        $DownloadFile.Write($attachment.Content, 0, $attachment.Content.Length)
+                        $DownloadFile.Close()
+                      }
+                    }
+                    elseif ($plaintext -match $regularexpresion)
+                    {
+                    Write-Output ("Found attachment " + $attachment.Name)
+                    $PostSearchList += $item
+                      if ($DownloadDir -ne "")
+                      { 
+                        $prefix = Get-Random
+                        $DownloadFile = new-object System.IO.FileStream(($DownloadDir + "\" + $prefix + $attachment.Name.ToString()), [System.IO.FileMode]::Create)
+                        $DownloadFile.Write($attachment.Content, 0, $attachment.Content.Length)
+                        $DownloadFile.Close()
+                      }
+                    }
+                  }    
+                }
+              }
+            }
+          }
         }
       }
     }
