@@ -58,6 +58,10 @@ function Invoke-GlobalMailSearch{
 
     The folder of each mailbox to search. By default the script only searches the "Inbox" folder. By specifying 'all' for the Folder option all of the folders including subfolders of the specified mailbox will be searched.
 
+  .PARAMETER Regex
+
+    The regex parameter allows for the use of regular expressions when doing searches. This will override the -Terms flag. 
+
   .EXAMPLE
 
     C:\PS> Invoke-GlobalMailSearch -ImpersonationAccount current-username -ExchHostname Exch01 -OutputCsv global-email-search.csv
@@ -89,6 +93,14 @@ function Invoke-GlobalMailSearch{
     Description
     -----------
     This command will connect to the Exchange server autodiscovered from the email address entered, and prompt for administrative credentials. Once administrative credentials have been entered a PS remoting session is setup to the Exchange server where the ApplicationImpersonation role is then granted to the "current-username" user. A list of all email addresses in the domain is then gathered, followed by a connection to Exchange Web Services as "current-username" where 100 of the latest emails from each folder including subfolders in each mailbox will be searched through for the terms "*passwords*","*super secret*","*industrial control systems*","*scada*","*launch codes*".
+
+  .EXAMPLE
+
+    C:\PS> Invoke-GlobalMailSearch -ImpersonationAccount current-username -AutoDiscoverEmail current-user@domain.com -Regex '.*3[47][0-9]{13}.*|.*(?:5[1-5][0-9]{2}|222[1-9]|22[3-9][0-9]|2[3-6][0-9]{2}|27[01][0-9]|2720)[0-9]{12}.*|.*4[0-9]{12}(?:[0-9]{3}).*'
+
+    Description
+    -----------
+    This command will utilize a Regex search instead of the standard Terms functionality. Specifically, the regular expression in the example above will attempt to match on valid VISA, Mastercard, and American Express credit card numbers in the body and subject's of emails.
 
 #>
 
@@ -136,7 +148,11 @@ function Invoke-GlobalMailSearch{
 
     [Parameter(Position = 10, Mandatory = $False)]
     [string]
-    $Folder = "Inbox"
+    $Folder = "Inbox",
+
+    [Parameter(Position = 11, Mandatory = $False)]
+    [string]
+    $Regex = ''
   )
 
   #Check for a method of connecting to the Exchange Server
@@ -301,7 +317,6 @@ $TASource=@'
   {
     $i++
         Write-Host -NoNewLine ("[" + $i + "/" + $AllMailboxes.count + "]") -foregroundcolor "yellow"; Write-Output (" Using " + $ImpersonationAccount + " to impersonate " + $Mailbox)
-    Write-Output ("[*] Now searching mailbox: $Mailbox for the terms $Terms.")
     $service.ImpersonatedUserId = New-Object Microsoft.Exchange.WebServices.Data.ImpersonatedUserId([Microsoft.Exchange.WebServices.Data.ConnectingIdType]::SmtpAddress,$Mailbox ); 
     $rootFolder = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,'MsgFolderRoot')
     $folderView = [Microsoft.Exchange.WebServices.Data.FolderView]100
@@ -349,22 +364,48 @@ $TASource=@'
       Write-Host -foregroundcolor "red" ("[*] Warning: " + $Mailbox + " does not appear to have a mailbox.")
       continue
     }   
-      #For each mail item in the mailbox search the body and subject for specific terms  
+      if ($regex -eq "")
+      {
+        Write-Output ("[*] Now searching mailbox: $Mailbox for the terms $Terms.")
+      }
+      else 
+      {
+        Write-Output ("[*] Now searching the mailbox: $Mailbox with the supplied regular expression.")    
+      }
+
       foreach ($item in $mails.Items)
       {    
         $item.Load($PropertySet)
-        foreach($specificterm in $Terms)
+        if ($Regex -eq "")
         {
-          if ($item.Body.Text -like $specificterm)
+          foreach($specificterm in $Terms)
           {
-          $PostSearchList += $item
-          }
-          elseif ($item.Subject -like $specificterm)
-          {
-          $PostSearchList += $item
+            if ($item.Body.Text -like $specificterm)
+            {
+            $PostSearchList += $item
+            }
+            elseif ($item.Subject -like $specificterm)
+            {
+            $PostSearchList += $item
+            }
           }
         }
+        else 
+        {
+          foreach($regularexpresion in $Regex)
+          {
+            if ($item.Body.Text -match $regularexpresion)
+            {
+            $PostSearchList += $item
+            }
+            elseif ($item.Subject -match $regularexpresion)
+            {
+            $PostSearchList += $item
+            }
+          }    
+        }
       }
+
     }
        
     if ($OutputCsv -ne "")
@@ -443,6 +484,10 @@ function Invoke-SelfSearch{
 
     The folder of each mailbox to search. By default the script only searches the "Inbox" folder. By specifying 'all' for the Folder option all of the folders including subfolders of the specified mailbox will be searched.
 
+  .PARAMETER Regex
+
+    The regex parameter allows for the use of regular expressions when doing searches. This will override the -Terms flag. 
+
   .EXAMPLE
 
     C:\PS> Invoke-SelfSearch -Mailbox current-user@domain.com 
@@ -467,6 +512,14 @@ function Invoke-SelfSearch{
     -----------
     This command will connect to the remote Exchange server specified with -ExchHostname using Exchange Web Services where by default 100 of the latest emails from the "Mailbox" will be searched through for the terms "*pass*","*creds*","*credentials*". Since the -Remote flag was passed a new credential box will popup asking for the user's credentials to authenticate to the remote EWS. The username should be the user's domain login (i.e. domain\username) but depending on how internal UPN's were setup it might accept the user's email address (i.e. user@domain.com).
 
+  .EXAMPLE
+
+    C:\PS> Invoke-SelfSearch -Mailbox current-user@domain.com -Regex '.*3[47][0-9]{13}.*|.*(?:5[1-5][0-9]{2}|222[1-9]|22[3-9][0-9]|2[3-6][0-9]{2}|27[01][0-9]|2720)[0-9]{12}.*|.*4[0-9]{12}(?:[0-9]{3}).*'
+
+    Description
+    -----------
+    This command will utilize a Regex search instead of the standard Terms functionality. Specifically, the regular expression in the example above will attempt to match on valid VISA, Mastercard, and American Express credit card numbers in the body and subject's of emails.
+  
   .EXAMPLE
 
     C:\PS> Invoke-SelfSearch -Mailbox current-user@domain.com -Folder all
@@ -508,7 +561,12 @@ function Invoke-SelfSearch{
 
     [Parameter(Position = 7, Mandatory = $False)]
     [string]
-    $Folder = 'Inbox'
+    $Folder = 'Inbox',
+
+    [Parameter(Position = 8, Mandatory = $False)]
+    [string]
+    $Regex = ''
+
 
   )
   #Running the LoadEWSDLL function to load the required Exchange Web Services dll
@@ -577,7 +635,6 @@ function Invoke-SelfSearch{
     $service.AutoDiscoverUrl($Mailbox, {$true})
   }    
 
-    Write-Output ("[*] Now searching mailbox: $Mailbox for the terms $Terms.")
     $msgfolderroot = [Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::MsgFolderRoot
     $mbx = New-Object Microsoft.Exchange.WebServices.Data.Mailbox( $Mailbox )
     $FolderId = New-Object Microsoft.Exchange.WebServices.Data.FolderId( $msgfolderroot, $mbx)  
@@ -618,19 +675,46 @@ function Invoke-SelfSearch{
       $PropertySet.RequestedBodyType = [Microsoft.Exchange.WebServices.Data.BodyType]::Text
      
       $mails = $Inbox.FindItems($MailsPerUser)   
+      
+      if ($regex -eq "")
+      {
+        Write-Output ("[*] Now searching mailbox: $Mailbox for the terms $Terms.")
+      }
+      else 
+      {
+        Write-Output ("[*] Now searching the mailbox: $Mailbox with the supplied regular expression.")    
+      }
+
       foreach ($item in $mails.Items)
       {    
         $item.Load($PropertySet)
-        foreach($specificterm in $Terms)
+        if ($Regex -eq "")
         {
-          if ($item.Body.Text -like $specificterm)
+          foreach($specificterm in $Terms)
           {
-          $PostSearchList += $item
+            if ($item.Body.Text -like $specificterm)
+            {
+            $PostSearchList += $item
+            }
+            elseif ($item.Subject -like $specificterm)
+            {
+            $PostSearchList += $item
+            }
           }
-          elseif ($item.Subject -like $specificterm)
+        }
+        else 
+        {
+          foreach($regularexpresion in $Regex)
           {
-          $PostSearchList += $item
-          }
+            if ($item.Body.Text -match $regularexpresion)
+            {
+            $PostSearchList += $item
+            }
+            elseif ($item.Subject -match $regularexpresion)
+            {
+            $PostSearchList += $item
+            }
+          }    
         }
       }
     }
