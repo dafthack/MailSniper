@@ -307,7 +307,8 @@ $TASource=@'
 
   #Allow user to impersonate other users
   Write-Output "[*] Now granting the $ImpersonationAccount user ApplicationImpersonation rights!"
-  New-ManagementRoleAssignment -Name:impersonationAssignmentName -Role:ApplicationImpersonation -User:$ImpersonationAccount | Out-Null
+  $ImpersonationAssignmentName = -join ((65..90) + (97..122) | Get-Random -Count 10 | % {[char]$_})
+  New-ManagementRoleAssignment -Name:$ImpersonationAssignmentName -Role:ApplicationImpersonation -User:$ImpersonationAccount | Out-Null
 
   #Get a list of all mailboxes
   if($EmailList -ne "")
