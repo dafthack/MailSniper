@@ -1605,7 +1605,7 @@ function Invoke-PasswordSprayEWS{
 
     .PARAMETER UserList
 
-        List of usernames 1 per line to to attempt to password spray against.
+        List of usernames including domain (domain\username), 1 per line to to attempt to password spray against.
 
     .PARAMETER Password
 
