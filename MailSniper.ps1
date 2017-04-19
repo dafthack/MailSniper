@@ -509,7 +509,8 @@ $TASource=@'
        
     if ($OutputCsv -ne "")
     { 
-      $PostSearchList | Select-Object Sender,ReceivedBy,Subject,Body | Export-Csv "temp-$OutputCsv"
+      $PostSearchList | %{ $_.Body = $_.Body -replace "`r`n",'\n' -replace ",",'&#44;'}
+      $PostSearchList | Select-Object Sender,ReceivedBy,Subject,Body | Export-Csv "temp-$OutputCsv" -encoding "UTF8"
         if ("temp-$OutputCsv")
         {
           Import-Csv "temp-$OutputCsv" | ConvertTo-Csv -NoTypeInformation | Select-Object -Skip 1 | Out-File -Encoding ascii -Append $OutputCsv
@@ -917,7 +918,8 @@ function Invoke-SelfSearch{
   $PostSearchList | ft -Property Sender,ReceivedBy,Subject,Body
   if ($OutputCsv -ne "")
   { 
-    $PostSearchList | Select-Object Sender,ReceivedBy,Subject,Body | Export-Csv $OutputCsv
+    $PostSearchList | %{ $_.Body = $_.Body -replace "`r`n",'\n' -replace ",",'&#44;'}
+    $PostSearchList | Select-Object Sender,ReceivedBy,Subject,Body | Export-Csv $OutputCsv -encoding "UTF8"
   }
 
 }
