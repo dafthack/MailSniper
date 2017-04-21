@@ -3,7 +3,7 @@ MailSniper is a penetration testing tool for searching through email in a Micros
 
 For more information about MailSniper check out this [blog post](http://www.blackhillsinfosec.com/?p=5296).
 
-MailSniper also includes additional modules for password spraying, and gathering the Global Address List from OWA and EWS.
+MailSniper also includes additional modules for password spraying, enumerating users/domains, gathering the Global Address List from OWA and EWS, and checking mailbox permissions for every Exchange user at an organization.
 
 For more information about additional MailSniper modules check out this [blog post](http://www.blackhillsinfosec.com/?p=5330).
 
@@ -30,7 +30,7 @@ Invoke-SelfSearch -Mailbox current-user@domain.com
 
 This command will connect to the Exchange server autodiscovered from the email address entered using Exchange Web Services where by default 100 of the latest emails from the "Mailbox" will be searched through for the terms "\*pass\*","\*creds\*","\*credentials\*".
 
-###Invoke-GlobalMailSearch Options
+### Invoke-GlobalMailSearch Options
 ```
 ImpersonationAccount  - This user will be granted the ApplicationImpersonation role on the Exchange server.
 ExchHostname          - The hostname of the Exchange server to connect to (If $AutoDiscoverEmail is specified the server will be autodiscovered).
@@ -47,7 +47,7 @@ Regex                 - The regex parameter allows for the use of regular expres
 CheckAttachments      - If the CheckAttachments option is added MailSniper will attempt to search through the contents of email attachements in addition to the default body/subject. These attachments can be downloaded by specifying the -DownloadDir option. It only searches attachments that are of extension .txt, .htm, .pdf, .ps1, .doc, .xls, .bat, and .msg currently.
 DownloadDir           - When the CheckAttachments option finds attachments that are matches to the search terms the files can be downloaded to a specific location using the -DownloadDir option. 
 ```
-###Invoke-SelfSearch Options
+### Invoke-SelfSearch Options
 ```
 ExchHostname          - The hostname of the Exchange server to connect to (If $Mailbox is specified the server will be autodiscovered).
 Mailbox               - Email address of the current user the PowerShell process is running as.
@@ -60,6 +60,7 @@ Folder                - The folder within each mailbox to search. By default the
 Regex                 - The regex parameter allows for the use of regular expressions when doing searches. This will override the -Terms flag.
 CheckAttachments      - If the CheckAttachments option is added MailSniper will attempt to search through the contents of email attachements in addition to the default body/subject. These attachments can be downloaded by specifying the -DownloadDir option. It only searches attachments that are of extension .txt, .htm, .pdf, .ps1, .doc, .xls, .bat, and .msg currently.
 DownloadDir           - When the CheckAttachments option finds attachments that are matches to the search terms the files can be downloaded to a specific location using the -DownloadDir option. 
+OtherUserMailbox      - Specify this flag when attempting to read emails from a different user's mailbox 
 ```
 ## Additional MailSniper Modules
 **Get-GlobalAddressList** is a module that will first attempt to connect to an Outlook Web Access portal and utilize the "FindPeople" method (only available in Exchange2013 and up) of gathering email addresses from the Global Address List. If this does not succeed the script will attempt to connect to Exchange Web Services where it will attempt to gather the Global Address List. 
@@ -85,4 +86,8 @@ Invoke-DomainHarvestOWA -ExchHostname mail.domain.com -DomainList .\domainlist.t
 **Invoke-UsernameHarvestOWA** is a module that will attempt to connect to an Outlook Web Access portal and harvest valid usernames based off of small timing differences in login attempts.
 ```PowerShell
 Invoke-UsernameHarvestOWA -ExchHostname mail.domain.com -UserList .\userlist.txt -Threads 1 -OutFile owa-valid-users.txt
+```
+**Invoke-OpenInboxFinder** is a module that will attempt to determine if the current user running MailSniper has access to the Inbox of each email address in a list of addresses.
+```PowerShell
+Invoke-OpenInboxFinder -EmailList email-list.txt
 ```
