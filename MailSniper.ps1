@@ -1,4 +1,4 @@
-function Invoke-GlobalMailSearch{
+﻿function Invoke-GlobalMailSearch{
 <#
   .SYNOPSIS
 
@@ -689,7 +689,12 @@ function Invoke-SelfSearch{
 
     [Parameter(Position = 10, Mandatory = $False)]
     [string]
-    $DownloadDir = ""
+    $DownloadDir = "",
+
+    [Parameter(Position = 11, Mandatory = $False)]
+    [switch]
+    $OtherUserMailbox
+
   )
   #Running the LoadEWSDLL function to load the required Exchange Web Services dll
   LoadEWSDLL
@@ -757,22 +762,161 @@ function Invoke-SelfSearch{
     $service.AutoDiscoverUrl($Mailbox, {$true})
   }    
 
-    $msgfolderroot = [Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::MsgFolderRoot
-    $mbx = New-Object Microsoft.Exchange.WebServices.Data.Mailbox( $Mailbox )
-    $FolderId = New-Object Microsoft.Exchange.WebServices.Data.FolderId( $msgfolderroot, $mbx)  
-    $rootFolder = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,$FolderId)
-    $folderView = [Microsoft.Exchange.WebServices.Data.FolderView]100
-    $folderView.Traversal='Deep'
-    $rootFolder.Load()
-    if ($Folder -ne "all")
+    if($OtherUserMailbox)
     {
-      $CustomFolderObj = $rootFolder.FindFolders($folderView) | Where-Object { $_.DisplayName -eq $Folder }
+        $msgfolderroot = New-Object Microsoft.Exchange.WebServices.Data.FolderId([Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::Inbox,$Mailbox)
+        $Inbox = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,$msgfolderroot)
+        $ItemView = New-Object Microsoft.Exchange.WebServices.Data.ItemView(1)
+        $Item = $service.FindItems($Inbox.Id,$ItemView)  
+
     }
     else
     {
-      $CustomFolderObj = $rootFolder.FindFolders($folderView) 
+        $msgfolderroot = [Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::MsgFolderRoot
+        $mbx = New-Object Microsoft.Exchange.WebServices.Data.Mailbox( $Mailbox )
+        $FolderId = New-Object Microsoft.Exchange.WebServices.Data.FolderId( $msgfolderroot, $mbx)  
+        $rootFolder = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,$FolderId)
+        $folderView = [Microsoft.Exchange.WebServices.Data.FolderView]100
+        $folderView.Traversal='Deep'
+        $rootFolder.Load()
+        if ($Folder -ne "all")
+        {
+          $CustomFolderObj = $rootFolder.FindFolders($folderView) | Where-Object { $_.DisplayName -eq $Folder }
+        }
+        else
+        {
+          $CustomFolderObj = $rootFolder.FindFolders($folderView) 
+        }
     }
+
     $PostSearchList = @() 
+    
+    if($OtherUserMailbox)
+    {
+         
+      $PropertySet = New-Object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.BasePropertySet]::FirstClassProperties)
+      $PropertySet.RequestedBodyType = [Microsoft.Exchange.WebServices.Data.BodyType]::Text
+     
+      $mails = $Inbox.FindItems($MailsPerUser)   
+      
+      if ($regex -eq "")
+      {
+        Write-Output ("[*] Now searching mailbox: $Mailbox for the terms $Terms.")
+      }
+      else 
+      {
+        Write-Output ("[*] Now searching the mailbox: $Mailbox with the supplied regular expression.")    
+      }
+
+      foreach ($item in $mails.Items)
+      {    
+        $item.Load($PropertySet)
+        if ($Regex -eq "")
+        {
+          foreach($specificterm in $Terms)
+          {
+            if ($item.Body.Text -like $specificterm)
+            {
+            $PostSearchList += $item
+            }
+            elseif ($item.Subject -like $specificterm)
+            {
+            $PostSearchList += $item
+            }
+          }
+        }
+        else 
+        {
+          foreach($regularexpresion in $Regex)
+          {
+            if ($item.Body.Text -match $regularexpresion)
+            {
+            $PostSearchList += $item
+            }
+            elseif ($item.Subject -match $regularexpresion)
+            {
+            $PostSearchList += $item
+            }
+          }    
+        }
+        if ($CheckAttachments)
+        {
+          foreach($attachment in $item.Attachments)
+          {
+            if($attachment -is [Microsoft.Exchange.WebServices.Data.FileAttachment])
+            {
+              if($attachment.Name.Contains(".txt") -Or $attachment.Name.Contains(".htm") -Or $attachment.Name.Contains(".pdf") -Or $attachment.Name.Contains(".ps1") -Or $attachment.Name.Contains(".doc") -Or $attachment.Name.Contains(".xls") -Or $attachment.Name.Contains(".bat") -Or $attachment.Name.Contains(".msg"))
+              {
+                $attachment.Load() | Out-Null
+                $plaintext = [System.Text.Encoding]::ASCII.GetString($attachment.Content)
+                if ($Regex -eq "")
+                {
+                  foreach($specificterm in $Terms)
+                  {
+                    if ($plaintext -like $specificterm)
+                    {
+                      Write-Output ("Found attachment " + $attachment.Name)
+                      $PostSearchList += $item
+                      if ($DownloadDir -ne "")
+                      { 
+                        $prefix = Get-Random
+                        $DownloadFile = new-object System.IO.FileStream(($DownloadDir + "\" + $prefix + "-" + $attachment.Name.ToString()), [System.IO.FileMode]::Create)
+                        $DownloadFile.Write($attachment.Content, 0, $attachment.Content.Length)
+                        $DownloadFile.Close()
+                      }
+                    }
+                    elseif ($plaintext -like $specificterm)
+                    {
+                      Write-Output ("Found attachment " + $attachment.Name)
+                      $PostSearchList += $item
+                      if ($DownloadDir -ne "")
+                      { 
+                        $prefix = Get-Random
+                        $DownloadFile = new-object System.IO.FileStream(($DownloadDir + "\" + $prefix + $attachment.Name.ToString()), [System.IO.FileMode]::Create)
+                        $DownloadFile.Write($attachment.Content, 0, $attachment.Content.Length)
+                        $DownloadFile.Close()
+                      }
+                    }
+                  }
+                }
+                else 
+                {
+                  foreach($regularexpresion in $Regex)
+                  {
+                    if ($plaintext -match $regularexpresion)
+                    {
+                    Write-Output ("Found attachment " + $attachment.Name)
+                    $PostSearchList += $item
+                      if ($DownloadDir -ne "")
+                      { 
+                        $prefix = Get-Random
+                        $DownloadFile = new-object System.IO.FileStream(($DownloadDir + "\" + $prefix + $attachment.Name.ToString()), [System.IO.FileMode]::Create)
+                        $DownloadFile.Write($attachment.Content, 0, $attachment.Content.Length)
+                        $DownloadFile.Close()
+                      }
+                    }
+                    elseif ($plaintext -match $regularexpresion)
+                    {
+                    Write-Output ("Found attachment " + $attachment.Name)
+                    $PostSearchList += $item
+                      if ($DownloadDir -ne "")
+                      { 
+                        $prefix = Get-Random
+                        $DownloadFile = new-object System.IO.FileStream(($DownloadDir + "\" + $prefix + $attachment.Name.ToString()), [System.IO.FileMode]::Create)
+                        $DownloadFile.Write($attachment.Content, 0, $attachment.Content.Length)
+                        $DownloadFile.Close()
+                      }
+                    }
+                  }    
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    else{
     Foreach($foldername in $CustomFolderObj)
     {
         Write-Output "[***] Found folder: $($foldername.DisplayName)"
@@ -914,6 +1058,7 @@ function Invoke-SelfSearch{
         }
       }
     }
+   } 
 
   $PostSearchList | ft -Property Sender,ReceivedBy,Subject,Body
   if ($OutputCsv -ne "")
@@ -2368,4 +2513,298 @@ function Get-BaseLineResponseTime {
     Write-Host ""
 
     return $AvgTime
+}
+
+function Invoke-OpenInboxFinder{
+
+<#
+  .SYNOPSIS
+
+    This module will connect to a Microsoft Exchange server using Exchange Web Services and check mailboxes to determine if the current user has permissions to access them.
+
+    MailSniper Function: Invoke-OpenInboxFinder
+    Author: Beau Bullock (@dafthack)
+    License: MIT
+    Required Dependencies: None
+    Optional Dependencies: None
+
+  .DESCRIPTION
+
+    This module will connect to a Microsoft Exchange server using Exchange Web Services and check mailboxes to determine if the current user has permissions to access them.
+
+  .PARAMETER ExchHostname
+
+    The hostname of the Exchange server to connect to.
+
+  .PARAMETER Mailbox
+
+    Email address of a single user to check permissions on.
+
+  .PARAMETER ExchangeVersion
+
+    In order to communicate with Exchange Web Services the correct version of Microsoft Exchange Server must be specified. By default this script tries "Exchange2010". Additional options to try are  Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1.
+  
+  .PARAMETER OutFile
+
+    Outputs the results of the search to a file.
+
+  .PARAMETER EmailList
+
+    List of email addresses one per line to check permissions on.
+
+  .PARAMETER AllPerms
+
+  Returns all of the permission items on an object
+
+  .PARAMETER Remote
+
+  Will prompt for credentials for use with connecting to a remote server such as Office365 or an externally facing Exchange server.
+
+  .EXAMPLE
+
+    C:\PS> Invoke-OpenInboxFinder -EmailList email-list.txt
+
+    Description
+    -----------
+    This command will check if the current user running the PowerShell session has access to each Inbox of the email addresses in the EmailList file.
+
+  .EXAMPLE
+
+    C:\PS> Invoke-OpenInboxFinder -EmailList email-list.txt -ExchHostname outlook.office365.com -Remote
+
+    Description
+    -----------
+    This command will prompt for credentials and then connect to Exchange Web Services on outlook.office365.com to check each mailbox permission. 
+
+#>
+  Param(
+
+    [Parameter(Position = 0, Mandatory = $False)]
+    [string]
+    $Mailbox = "",
+
+    [Parameter(Position = 1, Mandatory = $False)]
+    [system.URI]
+    $ExchHostname = "",
+
+    [Parameter(Position = 2, Mandatory = $False)]
+    [string]
+    $OutFile = "",
+
+    [Parameter(Position = 3, Mandatory = $False)]
+    [string]
+    $ExchangeVersion = "Exchange2010",
+
+    [Parameter(Position = 4, Mandatory = $False)]
+    [string]
+    $EmailList = "",
+
+    [Parameter(Position = 5, Mandatory = $False)]
+    [switch]
+    $AllPerms,
+
+    [Parameter(Position = 6, Mandatory = $False)]
+    [switch]
+    $Remote 
+
+  )
+  
+  #Running the LoadEWSDLL function to load the required Exchange Web Services dll
+  LoadEWSDLL
+  
+  $ErrorActionPreference = 'silentlycontinue'
+  $Mailboxes = @()
+
+  If ($EmailList -ne "") 
+  {
+    $Mailboxes = Get-Content -Path $EmailList
+    $Mailbox = $Mailboxes[0]
+  } 
+  elseif ($Mailbox -ne "")
+  {
+    $Mailboxes = $Mailbox
+  }
+
+  Write-Output "[*] Trying Exchange version $ExchangeVersion"
+  $ServiceExchangeVersion = [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::$ExchangeVersion
+  $service = New-Object Microsoft.Exchange.WebServices.Data.ExchangeService($ServiceExchangeVersion)
+ 
+  #If the -Remote flag was passed prompt for the user's domain credentials.
+  if ($Remote)
+  {
+    $remotecred = Get-Credential
+    $service.UseDefaultCredentials = $false
+    $service.Credentials = $remotecred.GetNetworkCredential()
+  }
+  else
+  {
+    #Using current user's credentials to connect to EWS
+    $service.UseDefaultCredentials = $true
+  }
+
+  ## Choose to ignore any SSL Warning issues caused by Self Signed Certificates     
+  ## Code From http://poshcode.org/624
+
+  ## Create a compilation environment
+  $Provider=New-Object Microsoft.CSharp.CSharpCodeProvider
+  $Compiler=$Provider.CreateCompiler()
+  $Params=New-Object System.CodeDom.Compiler.CompilerParameters
+  $Params.GenerateExecutable=$False
+  $Params.GenerateInMemory=$True
+  $Params.IncludeDebugInformation=$False
+  $Params.ReferencedAssemblies.Add("System.DLL") > $null
+
+  $TASource=@'
+    namespace Local.ToolkitExtensions.Net.CertificatePolicy{
+      public class TrustAll : System.Net.ICertificatePolicy {
+        public TrustAll() { 
+        }
+        public bool CheckValidationResult(System.Net.ServicePoint sp,
+          System.Security.Cryptography.X509Certificates.X509Certificate cert, 
+          System.Net.WebRequest req, int problem) {
+          return true;
+        }
+      }
+    }
+'@ 
+  $TAResults=$Provider.CompileAssemblyFromSource($Params,$TASource)
+  $TAAssembly=$TAResults.CompiledAssembly
+
+  ## We now create an instance of the TrustAll and attach it to the ServicePointManager
+  $TrustAll=$TAAssembly.CreateInstance("Local.ToolkitExtensions.Net.CertificatePolicy.TrustAll")
+  [System.Net.ServicePointManager]::CertificatePolicy=$TrustAll
+
+  ## end code from http://poshcode.org/624
+  
+
+  
+  if ($ExchHostname -ne "")
+  {
+    ("[*] Using EWS URL " + "https://" + $ExchHostname + "/EWS/Exchange.asmx")
+    $service.Url = new-object System.Uri(("https://" + $ExchHostname + "/EWS/Exchange.asmx"))
+  }
+  else
+  {
+    ("[*] Autodiscovering email server for " + $Mailbox + "...")
+    $service.AutoDiscoverUrl($Mailbox, {$true})
+  }    
+    
+    $curr_mbx = 0
+    $count = $Mailboxes.count
+    $OpenMailboxes = @()
+    Write-Output "`n`r"
+    #First we will check to see if there are any public folders available
+    Write-Output "[*] Checking for any public folders..."
+    Write-Output "`n`r"
+    #$publicfolderroot = New-Object Microsoft.Exchange.WebServices.Data.FolderId([Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::PublicFoldersRoot,$mbx)
+    $PublicPropSet = New-Object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.BasePropertySet]::FirstClassProperties)
+    $PublicPropSet.Add([Microsoft.Exchange.WebServices.Data.FolderSchema]::Permissions)
+    #adding property set to get Public Folder Path
+    $PR_Folder_Path = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition(26293, [Microsoft.Exchange.WebServices.Data.MapiPropertyType]::String);    
+    $PublicPropSet.Add($PR_Folder_Path)  
+
+    
+    $PublicFolders = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,'PublicFoldersRoot',$PublicPropSet) 
+    $folderView = [Microsoft.Exchange.WebServices.Data.FolderView]100
+
+
+    $PublicFolders.Load()
+    $CustomFolderObj = $PublicFolders.FindFolders($folderView) 
+    
+    $foldercollection = @()
+    $publicfolders = @()
+    Foreach($foldername in $CustomFolderObj.Folders)
+    {
+
+        Write-Output ("Found public folder: " + $foldername.DisplayName)
+
+           
+                #Code that needs some modification to get the Folder Path for use when binding to the folder
+                                
+                #$foldpathval = $null    
+                #$folderCollection += $ffFolder  
+                #Try to get the FolderPath Value and then covert it to a usable String 
+                  
+                #if ($foldername.TryGetProperty($PR_Folder_Path,[ref] $foldpathval))    
+                #{    
+                #    $foldpathval
+                #    $binary = [Text.Encoding]::UTF8.GetBytes($foldpathval)    
+                #    $hexArr = $binary | ForEach-Object { $_.ToString("X2") }    
+                #    $hexString = $hexArr -join ''    
+                #    $hexString = $hexString.Replace("FEFF", "5C00")    
+                #    $fpath = ConvertToString($hexString)    
+               #}    
+               # "FolderPath : " + $fpath    
+               #if($foldername.ChildFolderCount -gt 0){  
+               #     $Childfolders = GetPublicFolders -RootFolderId $foldername.Id  
+               #     foreach($Childfolder in $Childfolders){  
+               #         $folderCollection += $Childfolder  
+               #     }  
+               # }  
+              
+
+
+    }
+    $publicfolders
+    Write-Output "`n`r"
+    Write-Output "[*] Checking access to mailboxes for each email address..."
+    Write-Output "`n`r"
+    foreach($mbx in $Mailboxes)
+    {
+        
+        Write-Host -nonewline "$curr_mbx of $count mailboxes checked`r" 
+        $curr_mbx += 1
+        $Inbox = ""
+        $msgfolderroot = New-Object Microsoft.Exchange.WebServices.Data.FolderId([Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::Inbox,$mbx)
+        $PropSet = New-Object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.BasePropertySet]::FirstClassProperties)
+        $PropSet.Add([Microsoft.Exchange.WebServices.Data.FolderSchema]::Permissions)
+        $Inbox = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,$msgfolderroot,$PropSet)
+        $ItemView = New-Object Microsoft.Exchange.WebServices.Data.ItemView(1)
+
+        try
+        {
+            
+            $Item = $service.FindItems($Inbox.Id,$ItemView)  
+            Write-Output "[*] SUCCESS! Inbox of $mbx is readable."
+            $permissions = $Inbox.Permissions
+            if ($AllPerms)
+            {
+                Write-Output "All Permission Settings for Inbox of $mbx"
+                $permissions
+            }
+            else
+            {
+                foreach ($x in $permissions)
+                {
+                    if ($x.UserId.StandardUser -ne $null)
+                    {
+                        Write-Output ("Permission level for " + $x.UserId.StandardUser + " set to: " + $x.PermissionLevel)
+                    }
+                    else
+                    {
+                        Write-Output ("Permission level for " + $x.UserId.DisplayName + " set to: " + $x.PermissionLevel)
+                  
+                    }
+                }
+            }
+            Write-Output ("Subject of latest email in inbox: " + $Item.Subject)
+            
+            
+            $OpenMailboxes += $mbx
+        }
+        catch
+      {
+        $ErrorMessage = $_.Exception.Message
+        continue
+        
+      }
+
+
+    }
+
+    if ($OutFile -ne "")
+    {
+      $OpenMailboxes | Out-File -Encoding ascii $OutFile
+    }
+
 }
