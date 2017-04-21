@@ -5,7 +5,11 @@ For more information about MailSniper check out this [blog post](http://www.blac
 
 MailSniper also includes additional modules for password spraying, enumerating users/domains, gathering the Global Address List from OWA and EWS, and checking mailbox permissions for every Exchange user at an organization.
 
-For more information about additional MailSniper modules check out this [blog post](http://www.blackhillsinfosec.com/?p=5330).
+For more information about additional MailSniper modules check out these blog posts: 
+
+- [GAL & Password Spraying](http://www.blackhillsinfosec.com/?p=5330)
+
+- [Invoke-OpenInboxFinder](http://www.blackhillsinfosec.com/?p=5871)
 
 ## Quick Start Guide
 There are two main functions in MailSniper. These two functions are **Invoke-GlobalMailSearch** and **Invoke-SelfSearch**.
