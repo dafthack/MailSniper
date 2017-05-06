@@ -1682,7 +1682,7 @@ function Invoke-PasswordSprayOWA{
         #Setting POST parameters for the login to OWA
         $ProgressPreference = 'silentlycontinue'
 	$cadatacookie = ""
-    	$sess = ""
+    $sess = ""
 	$owa = Invoke-WebRequest -Uri $OWAURL2 -SessionVariable sess -ErrorAction SilentlyContinue 
 	$form = $owa.Forms[0]
 	$form.fields.password=$Password
@@ -1705,6 +1705,7 @@ function Invoke-PasswordSprayOWA{
 
     }
     } -ArgumentList $userlists[$_], $Password, $OWAURL2, $OWAURL | Out-Null
+
 }
 $Complete = Get-Date
 $MaxWaitAtEnd = 10000
@@ -2623,7 +2624,7 @@ function Invoke-OpenInboxFinder{
   #Running the LoadEWSDLL function to load the required Exchange Web Services dll
   LoadEWSDLL
   
-  $ErrorActionPreference = 'silentlycontinue'
+  $ErrorActionPreference = 'silentlycontinue' 
   $Mailboxes = @()
 
   If ($EmailList -ne "") 
@@ -2715,7 +2716,15 @@ function Invoke-OpenInboxFinder{
     $PublicPropSet.Add($PR_Folder_Path)  
 
     
+    try
+    {
     $PublicFolders = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,'PublicFoldersRoot',$PublicPropSet) 
+    }
+    catch
+    {
+    Write-Output "[*] Login appears to have failed. Try the -Remote flag and enter valid credentials when prompted."
+    break
+    }
     $folderView = [Microsoft.Exchange.WebServices.Data.FolderView]100
 
 
