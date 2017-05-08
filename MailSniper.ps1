@@ -2701,6 +2701,16 @@ function Invoke-OpenInboxFinder{
     $service.AutoDiscoverUrl($Mailbox, {$true})
   }    
     
+    try
+    {  
+    $FolderRootConnect = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,'MsgFolderRoot') 
+    }
+    catch
+    {
+    Write-Output "[*] Login appears to have failed. Try the -Remote flag and enter valid credentials when prompted."
+    break
+    }
+    
     $curr_mbx = 0
     $count = $Mailboxes.count
     $OpenMailboxes = @()
@@ -2716,15 +2726,9 @@ function Invoke-OpenInboxFinder{
     $PublicPropSet.Add($PR_Folder_Path)  
 
     
-    try
-    {
+
     $PublicFolders = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,'PublicFoldersRoot',$PublicPropSet) 
-    }
-    catch
-    {
-    Write-Output "[*] Login appears to have failed. Try the -Remote flag and enter valid credentials when prompted."
-    break
-    }
+
     $folderView = [Microsoft.Exchange.WebServices.Data.FolderView]100
 
 
