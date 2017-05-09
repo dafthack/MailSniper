@@ -2833,15 +2833,15 @@ function Invoke-OpenInboxFinder{
 
 }
 
-function Invoke-MailboxContact{
+function Get-ADUsernameFromEWS{
 
 <#
   .SYNOPSIS
 
     This module will connect to a Microsoft Exchange server using Exchange Web Services and use a mailbox to get user contact information.
 
-    MailSniper Function: Invoke-MailboxAlias
-    Author: Ralph May (@ralphte01)
+    MailSniper Function: Get-ADUsernameFromEWS
+    Author: Ralph May (@ralphte01) and Beau Bullock (@dafthack)
     License: MIT
     Required Dependencies: None
     Optional Dependencies: None
@@ -2853,11 +2853,7 @@ function Invoke-MailboxContact{
   .PARAMETER ExchHostname
 
     The hostname of the Exchange server to connect to.
-
-  .PARAMETER Mailbox
-
-    Email address of a single user to use to get other contacts.
-
+ 
   .PARAMETER ExchangeVersion
 
     In order to communicate with Exchange Web Services the correct version of Microsoft Exchange Server must be specified. By default this script tries "Exchange2010". Additional options to try are  Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1.
@@ -2872,62 +2868,53 @@ function Invoke-MailboxContact{
 
   .PARAMETER EmailAddress
 
-  Will prompt for Email Addess of the contact you would like more information on.
+  A single Email Addess of the contact you would like the username of.
 
   .PARAMETER EmailList
 
-  List of email addresses one per line to check permissions on.
+  List of email addresses one per line to get usernames of.
 
-  .PARAMETER SearchGal
-
-  Search for contact information in the GAL. THis is on by default
-
-  .PARAMETER Partial
+   .PARAMETER Partial
 
   Will Search for Partial contact matches.
 
   .PARAMETER AliasOnly
 
   Will only show the user Alias which is the active directory username.
-
-
-
-  .EXAMPLE
-
-    C:\PS> MailboxContact -EmailList email-list.txt
-
-    Description
-    -----------
-    This command will check if the current user running the PowerShell session has access to each Inbox of the email addresses in the EmailList file.
+  
 
   .EXAMPLE
 
-    C:\PS> Invoke-OpenInboxFinder -Mailbox email-list.txt -ExchHostname outlook.office365.com -Remote
+    C:\PS> Get-ADUsernameFromEWS -EmailList email-list.txt
 
     Description
     -----------
-    This command will prompt for credentials and then connect to Exchange Web Services on outlook.office365.com to check each mailbox permission. 
+    This command will attempt to get the Active Directory usernames from EWS.
+
+  .EXAMPLE
+
+    C:\PS> Get-ADUsernameFromEWS -Mailbox email-list.txt -ExchHostname outlook.office365.com -Remote
+
+    Description
+    -----------
+    This command will prompt for credentials and then connect to Exchange Web Services on outlook.office365.com to check each email address in the email-list.txt for their associated usernames. 
 
 #>
   Param(
 
     [Parameter(Position = 0, Mandatory = $False)]
-    [string]
-    $Mailbox = "",
-
-    [Parameter(Position = 1, Mandatory = $False)]
     [system.URI]
     $ExchHostname = "",
 
-    [Parameter(Position = 2, Mandatory = $False)]
+    [Parameter(Position = 1, Mandatory = $False)]
     [string]
     $OutFile = "",
 
-    [Parameter(Position = 3, Mandatory = $False)]
+    [Parameter(Position = 2, Mandatory = $False)]
     [string]
     $ExchangeVersion = "Exchange2010_SP2",
 
-    [Parameter(Position = 4, Mandatory = $False)]
+    [Parameter(Position = 3, Mandatory = $False)]
     [string]
     $EmailList = "",
 
@@ -2935,23 +2922,15 @@ function Invoke-MailboxContact{
     [switch]
     $Remote,
 
-    [Parameter(Position=5, Mandatory=$true)] 
+    [Parameter(Position=5, Mandatory=$false)] 
     [string]
     $EmailAddress,
 
-    [Parameter(Position=6, Mandatory=$False)] 
-    [string]
-    $Folder,
-		
-    [Parameter(Position=7, Mandatory=$False)]
-    [switch]
-    $SearchGal = $true,
-
-    [Parameter(Position=8, Mandatory=$False)]
+    [Parameter(Position=6, Mandatory=$False)]
     [switch]
     $Partial,
 
-    [Parameter(Position=9, Mandatory=$False)]
+    [Parameter(Position=7, Mandatory=$False)]
     [switch]
     $AliasOnly
 
@@ -2961,7 +2940,12 @@ function Invoke-MailboxContact{
   LoadEWSDLL
   
   $ErrorActionPreference = 'silentlycontinue'
-  $Mailboxes = @()
+
+  if (($EmailList -eq "") -and ($EmailAddress -eq ""))
+    {
+    Write-Output "[*] Either an EmailList or a single EmailAddress must be specified."
+    break
+    }
 
   If ($EmailList -ne "") 
   {
@@ -3032,109 +3016,52 @@ function Invoke-MailboxContact{
   }
   else
   {
-    ("[*] Autodiscovering email server for " + $Mailbox + "...")
-    $service.AutoDiscoverUrl($Mailbox, {$true})
+    ("[*] Autodiscovering email server for " + $EmailAddress + "...")
+    $service.AutoDiscoverUrl($EmailAddress, {$true})
   }    
     
-  Write-Output ("[*] Now searching mailbox: $Mailbox for Contacts.")  
-
     $curr_email = 0
     $count = $Emails.count
     
     Write-Output "`n`r"
-    Write-Output "[*] Getting contact information for each email address..."
+    Write-Output "[*] Getting AD usernames for each email address..."
     Write-Output "`n`r"
 
+    $allusernames = @()
 
     foreach($EmailAddress in $Emails)
-    {
+    { 
+        $folderid= new-object Microsoft.Exchange.WebServices.Data.FolderId([Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::Contacts,$EmailAddress)   
 
-    Write-Host "$curr_email of $count emails checked`r"
-    $curr_email += 1
+	    $Error.Clear();
+	    $cnpsPropset= new-object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.BasePropertySet]::FirstClassProperties) 
+	    $ncCol = $service.ResolveName($EmailAddress,$ParentFolderIds,[Microsoft.Exchange.WebServices.Data.ResolveNameSearchLocation]::DirectoryOnly,$true,$cnpsPropset);
+	    if($Error.Count -eq 0)
+        {
+		    foreach($Result in $ncCol)
+            {	
+                if(($Result.Mailbox.Address.ToLower() -eq $EmailAddress.ToLower()) -bor $Partial.IsPresent -bor $AliasOnly.IsPresent )
+                {
+                    $Alias = $ncCol.Contact.Alias
+				    Write-Output (("[*] $EmailAddress = ") + ("$Alias "))  
+                    $allusernames += $Alias
+                }
 
-    $folderid= new-object Microsoft.Exchange.WebServices.Data.FolderId([Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::Contacts,$Mailbox)   
-		if($SearchGal)
-		{
-			$Error.Clear();
-			$cnpsPropset= new-object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.BasePropertySet]::FirstClassProperties) 
-			$ncCol = $service.ResolveName($EmailAddress,$ParentFolderIds,[Microsoft.Exchange.WebServices.Data.ResolveNameSearchLocation]::DirectoryOnly,$true,$cnpsPropset);
-			if($Error.Count -eq 0){
-				foreach($Result in $ncCol){	
-                    if(($Result.Mailbox.Address.ToLower() -eq $EmailAddress.ToLower()) -bor $Partial.IsPresent -bor $AliasOnly.IsPresent ){
-                        $Alias = $ncCol.Contact.Alias
-						Write-Output "Email: $EmailAddress" 
-                        Write-Output "Username: $Alias "  }
-		            elseif(($Result.Mailbox.Address.ToLower() -eq $EmailAddress.ToLower()) -bor $Partial.IsPresent){
-						Write-Output $ncCol.Contact
-					}
-					else{
-						Write-host -ForegroundColor Yellow ("Partial Match found but not returned because Primary Email Address doesn't match consider using -Partial " + $ncCol.Contact.DisplayName + " : Subject-" + $ncCol.Contact.Subject + " : Email-" + $Result.Mailbox.Address)
-					}
-				}
-			}
-		}
-		else
-		{
-			if($Folder){
-				$Contacts = Get-ContactFolder -service $service -FolderPath $Folder -SmptAddress $Mailbox
-			}
-			else{
-				$Contacts = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,$folderid)
-			}
-			if($service.URL){
-				$type = ("System.Collections.Generic.List"+'`'+"1") -as "Type"
-				$type = $type.MakeGenericType("Microsoft.Exchange.WebServices.Data.FolderId" -as "Type")
-				$ParentFolderIds = [Activator]::CreateInstance($type)
-				$ParentFolderIds.Add($Contacts.Id)
-				$Error.Clear();
-				$cnpsPropset= new-object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.BasePropertySet]::FirstClassProperties) 
-				$ncCol = $service.ResolveName($EmailAddress,$ParentFolderIds,[Microsoft.Exchange.WebServices.Data.ResolveNameSearchLocation]::DirectoryThenContacts,$true,$cnpsPropset);
-				if($Error.Count -eq 0){
-					if ($ncCol.Count -eq 0) {
-						Write-Host -ForegroundColor Yellow ("No Contact Found")		
-					}
-					else{
-						$ResultWritten = $false
-						foreach($Result in $ncCol){
-							if($Result.Contact -eq $null){
-								if(($Result.Mailbox.Address.ToLower() -eq $EmailAddress.ToLower()) -bor $Partial.IsPresent){
-									$Contact = [Microsoft.Exchange.WebServices.Data.Contact]::Bind($service,$Result.Mailbox.Id)
-									Write-Output $Contact  
-									$ResultWritten = $true
-								}
-							}
-							else{
-							
-								if(($Result.Mailbox.Address.ToLower() -eq $EmailAddress.ToLower()) -bor $Partial.IsPresent){
-									if($Result.Mailbox.MailboxType -eq [Microsoft.Exchange.WebServices.Data.MailboxType]::Mailbox){
-										$ResultWritten = $true
-										$UserDn = Get-UserDN -EmailAddress $Result.Mailbox.Address -Credentials $Credentials 
-										$cnpsPropset= new-object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.BasePropertySet]::FirstClassProperties) 
-										$ncCola = $service.ResolveName($UserDn,$ParentFolderIds,[Microsoft.Exchange.WebServices.Data.ResolveNameSearchLocation]::ContactsOnly,$true,$cnpsPropset);
-										if ($ncCola.Count -eq 0) {  
-											#Write-Host -ForegroundColor Yellow ("No Contact Found")			
-										}
-										else
-										{
-											$ResultWritten = $true
-											Write-Host ("Number of matching Contacts Found " + $ncCola.Count)
-											foreach($aResult in $ncCola){
-												$Contact = [Microsoft.Exchange.WebServices.Data.Contact]::Bind($service,$aResult.Mailbox.Id)
-												Write-Output $Contact
-											}
-											
-										}
-									}
-								}
-							}
-						}
-				    }
-						if(!$ResultWritten){
-							Write-Host -ForegroundColor Yellow ("No Contract Found")
-						}
-					}
-				}
-				
-			}
-		}
+		        elseif(($Result.Mailbox.Address.ToLower() -eq $EmailAddress.ToLower()) -bor $Partial.IsPresent)
+                {
+				    Write-Output $ncCol.Contact
+			    }
+			    else
+                {
+				    Write-host -ForegroundColor Yellow ("Partial Match found but not returned because Primary Email Address doesn't match consider using -Partial " + $ncCol.Contact.DisplayName + " : Subject-" + $ncCol.Contact.Subject + " : Email-" + $Result.Mailbox.Address)
+			    }
+		    }
+        }
+        $curr_email += 1	
+        Write-Host -NoNewline "$curr_email of $count users tested `r"	
 	}
+   if ($OutFile -ne "")
+   {
+   $allusernames | Out-File -Encoding ascii $OutFile
+   }
+}
