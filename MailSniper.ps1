@@ -2832,3 +2832,236 @@ function Invoke-OpenInboxFinder{
     }
 
 }
+
+function Get-ADUsernameFromEWS{
+
+<#
+  .SYNOPSIS
+
+    This module will connect to a Microsoft Exchange server using Exchange Web Services and use a mailbox to get user contact information.
+
+    MailSniper Function: Get-ADUsernameFromEWS
+    Author: Ralph May (@ralphte01) and Beau Bullock (@dafthack)
+    License: MIT
+    Required Dependencies: None
+    Optional Dependencies: None
+
+  .DESCRIPTION
+
+    This module will connect to a Microsoft Exchange server using Exchange Web Services and use a mailbox to get user contact information.
+
+  .PARAMETER ExchHostname
+
+    The hostname of the Exchange server to connect to.
+ 
+  .PARAMETER ExchangeVersion
+
+    In order to communicate with Exchange Web Services the correct version of Microsoft Exchange Server must be specified. By default this script tries "Exchange2010". Additional options to try are  Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1.
+  
+  .PARAMETER OutFile
+
+    Outputs the results of the search to a file.
+
+  .PARAMETER Remote
+
+  Will prompt for credentials for use with connecting to a remote server such as Office365 or an externally facing Exchange server.
+
+  .PARAMETER EmailAddress
+
+  A single Email Addess of the contact you would like the username of.
+
+  .PARAMETER EmailList
+
+  List of email addresses one per line to get usernames of.
+
+   .PARAMETER Partial
+
+  Will Search for Partial contact matches.
+
+  .PARAMETER AliasOnly
+
+  Will only show the user Alias which is the active directory username.
+  
+
+  .EXAMPLE
+
+    C:\PS> Get-ADUsernameFromEWS -EmailList email-list.txt
+
+    Description
+    -----------
+    This command will attempt to get the Active Directory usernames from EWS.
+
+  .EXAMPLE
+
+    C:\PS> Get-ADUsernameFromEWS -Mailbox email-list.txt -ExchHostname outlook.office365.com -Remote
+
+    Description
+    -----------
+    This command will prompt for credentials and then connect to Exchange Web Services on outlook.office365.com to check each email address in the email-list.txt for their associated usernames. 
+
+#>
+  Param(
+
+    [Parameter(Position = 0, Mandatory = $False)]
+    [system.URI]
+    $ExchHostname = "",
+
+    [Parameter(Position = 1, Mandatory = $False)]
+    [string]
+    $OutFile = "",
+
+    [Parameter(Position = 2, Mandatory = $False)]
+    [string]
+    $ExchangeVersion = "Exchange2010_SP2",
+
+    [Parameter(Position = 3, Mandatory = $False)]
+    [string]
+    $EmailList = "",
+
+    [Parameter(Position = 4, Mandatory = $False)]
+    [switch]
+    $Remote,
+
+    [Parameter(Position=5, Mandatory=$false)] 
+    [string]
+    $EmailAddress,
+
+    [Parameter(Position=6, Mandatory=$False)]
+    [switch]
+    $Partial,
+
+    [Parameter(Position=7, Mandatory=$False)]
+    [switch]
+    $AliasOnly
+
+  )
+  
+  #Running the LoadEWSDLL function to load the required Exchange Web Services dll
+  LoadEWSDLL
+  
+  $ErrorActionPreference = 'silentlycontinue'
+
+  if (($EmailList -eq "") -and ($EmailAddress -eq ""))
+    {
+    Write-Output "[*] Either an EmailList or a single EmailAddress must be specified."
+    break
+    }
+
+  If ($EmailList -ne "") 
+  {
+    $Emails = Get-Content -Path $EmailList
+    $EmailAddress = $Emails[0]
+  } 
+  elseif ($Emails -ne "")
+  {
+    $Emails = $EmailAddress
+  }
+
+  Write-Output "[*] Trying Exchange version $ExchangeVersion"
+  $ServiceExchangeVersion = [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::$ExchangeVersion
+  $service = New-Object Microsoft.Exchange.WebServices.Data.ExchangeService($ServiceExchangeVersion)
+ 
+  #If the -Remote flag was passed prompt for the user's domain credentials.
+  if ($Remote)
+  {
+    $remotecred = Get-Credential
+    $service.UseDefaultCredentials = $false
+    $service.Credentials = $remotecred.GetNetworkCredential()
+  }
+  else
+  {
+    #Using current user's credentials to connect to EWS
+    $service.UseDefaultCredentials = $true
+  }
+
+  ## Choose to ignore any SSL Warning issues caused by Self Signed Certificates     
+  ## Code From http://poshcode.org/624
+
+  ## Create a compilation environment
+  $Provider=New-Object Microsoft.CSharp.CSharpCodeProvider
+  $Compiler=$Provider.CreateCompiler()
+  $Params=New-Object System.CodeDom.Compiler.CompilerParameters
+  $Params.GenerateExecutable=$False
+  $Params.GenerateInMemory=$True
+  $Params.IncludeDebugInformation=$False
+  $Params.ReferencedAssemblies.Add("System.DLL") > $null
+
+  $TASource=@'
+    namespace Local.ToolkitExtensions.Net.CertificatePolicy{
+      public class TrustAll : System.Net.ICertificatePolicy {
+        public TrustAll() { 
+        }
+        public bool CheckValidationResult(System.Net.ServicePoint sp,
+          System.Security.Cryptography.X509Certificates.X509Certificate cert, 
+          System.Net.WebRequest req, int problem) {
+          return true;
+        }
+      }
+    }
+'@ 
+  $TAResults=$Provider.CompileAssemblyFromSource($Params,$TASource)
+  $TAAssembly=$TAResults.CompiledAssembly
+
+  ## We now create an instance of the TrustAll and attach it to the ServicePointManager
+  $TrustAll=$TAAssembly.CreateInstance("Local.ToolkitExtensions.Net.CertificatePolicy.TrustAll")
+  [System.Net.ServicePointManager]::CertificatePolicy=$TrustAll
+
+  ## end code from http://poshcode.org/624
+
+  
+  if ($ExchHostname -ne "")
+  {
+    ("[*] Using EWS URL " + "https://" + $ExchHostname + "/EWS/Exchange.asmx")
+    $service.Url = new-object System.Uri(("https://" + $ExchHostname + "/EWS/Exchange.asmx"))
+  }
+  else
+  {
+    ("[*] Autodiscovering email server for " + $EmailAddress + "...")
+    $service.AutoDiscoverUrl($EmailAddress, {$true})
+  }    
+    
+    $curr_email = 0
+    $count = $Emails.count
+    
+    Write-Output "`n`r"
+    Write-Output "[*] Getting AD usernames for each email address..."
+    Write-Output "`n`r"
+
+    $allusernames = @()
+
+    foreach($EmailAddress in $Emails)
+    { 
+        $folderid= new-object Microsoft.Exchange.WebServices.Data.FolderId([Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::Contacts,$EmailAddress)   
+
+	    $Error.Clear();
+	    $cnpsPropset= new-object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.BasePropertySet]::FirstClassProperties) 
+	    $ncCol = $service.ResolveName($EmailAddress,$ParentFolderIds,[Microsoft.Exchange.WebServices.Data.ResolveNameSearchLocation]::DirectoryOnly,$true,$cnpsPropset);
+	    if($Error.Count -eq 0)
+        {
+		    foreach($Result in $ncCol)
+            {	
+                if(($Result.Mailbox.Address.ToLower() -eq $EmailAddress.ToLower()) -bor $Partial.IsPresent -bor $AliasOnly.IsPresent )
+                {
+                    $Alias = $ncCol.Contact.Alias
+				    Write-Output (("[*] $EmailAddress = ") + ("$Alias "))  
+                    $allusernames += $Alias
+                }
+
+		        elseif(($Result.Mailbox.Address.ToLower() -eq $EmailAddress.ToLower()) -bor $Partial.IsPresent)
+                {
+				    Write-Output $ncCol.Contact
+			    }
+			    else
+                {
+				    Write-host -ForegroundColor Yellow ("Partial Match found but not returned because Primary Email Address doesn't match consider using -Partial " + $ncCol.Contact.DisplayName + " : Subject-" + $ncCol.Contact.Subject + " : Email-" + $Result.Mailbox.Address)
+			    }
+		    }
+        }
+        $curr_email += 1	
+        Write-Host -NoNewline "$curr_email of $count users tested `r"	
+	}
+   if ($OutFile -ne "")
+   {
+   $allusernames | Out-File -Encoding ascii $OutFile
+   }
+}
