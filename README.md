@@ -95,3 +95,8 @@ Invoke-UsernameHarvestOWA -ExchHostname mail.domain.com -UserList .\userlist.txt
 ```PowerShell
 Invoke-OpenInboxFinder -EmailList email-list.txt
 ```
+**Get-ADUsernameFromEWS** is a module that will attempt to determine the Active Directory username for a single email address or a list of addresses. Use the Get-GlobalAddressList module to harvest a full list of email addresses to use with Get-ADUsernameFromEWS.
+```PowerShell
+Get-ADUsernameFromEWS -EmailList email-list.txt
+```
+
