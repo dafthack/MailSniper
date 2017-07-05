@@ -2023,14 +2023,27 @@ function Invoke-DomainHarvestOWA {
     .PARAMETER CompanyName
         
         Automatically generate and try potential domain names based upon a company name
+
+    .PARAMETER Brute
+
+        Causes Invoke-DomainHarvestOWA to attempt to perform a timing attack to determine the internal domain name.
   
   .EXAMPLE
 
-    C:\PS> Invoke-DomainHarvestOWA -ExchHostname mail.domain.com -DomainList .\domainlist.txt -OutFile potentially-valid-domains.txt
+    C:\PS> Invoke-DomainHarvestOWA -ExchHostname mail.domain.com -DomainList .\domainlist.txt -OutFile potentially-valid-domains.txt -brute
 
     Description
     -----------
     This command will connect to the Outlook Web Access server at https://mail.domain.com/owa/ and attempt to harvest a list of valid domains by combining each potential domain name provided with an arbitrary username and password and write to a file called owa-valid-users.txt.
+
+  
+  .EXAMPLE
+
+    C:\PS> Invoke-DomainHarvestOWA -ExchHostname mail.domain.com 
+
+    Description
+    -----------
+    This command will connect to the Outlook Web Access server at https://mail.domain.com/autodiscover/Autodiscover.xml, and https://mail.domain.com/EWS/Exchange.asmx and attempt to enumerate the internal domain name based off of the WWW-Authenticate header response.
 
 #>
   Param(
@@ -2040,7 +2053,7 @@ function Invoke-DomainHarvestOWA {
     [system.URI]
     $ExchHostname = "",
 
-    [Parameter(Position = 1, Mandatory = $True)]
+    [Parameter(Position = 1, Mandatory = $false)]
     [string]
     $OutFile = "",
 
@@ -2050,37 +2063,20 @@ function Invoke-DomainHarvestOWA {
 
     [Parameter(Position = 3, Mandatory = $False)]
     [string]
-    $CompanyName = ""
+    $CompanyName = "",
+
+    [Parameter(Position = 4, Mandatory = $False)]
+    [switch]
+    $Brute
 
   )
     
-    Write-Host -ForegroundColor "yellow" "[*] Harvesting Domain Name from the OWA portal at https://$ExchHostname/owa/"
+    Write-Host -ForegroundColor "yellow" "[*] Harvesting domain name from the server at $ExchHostname"
     #Setting up URL's for later
     $OWAURL = ("https://" + $ExchHostname + "/owa/auth.owa")
     $OWAURL2 = ("https://" + $ExchHostname + "/owa/")
-    
-    $Domains = @()
-
-    if ($DomainList -ne "") {
-        $Domains += Get-Content $DomainList
-    }
-    elseif ($CompanyName -ne "") {
-        
-        #Generate a list of potential domain names based on spacing and mixed capitalization
-        $Domains = Gen-Names -Name $CompanyName
-    }
-    else {
-        Write-Output -ForegroundColor "red" "You must provide either a DomainList or a ComapnyName"
-        return
-    }
-
-    #Generate random 10-character username and password
-    #source: https://blogs.technet.microsoft.com/heyscriptingguy/2015/11/05/generate-random-letters-with-powershell/
-    $Username = -join ((65..90) + (97..122) | Get-Random -Count 10 | % {[char]$_})
-    $Password = -join ((65..90) + (97..122) | Get-Random -Count 10 | % {[char]$_})
-    $sprayed = @()
-    $domainlists = @{}
-    $count = 0 
+    $autodiscoverurl = ("https://" + $ExchHostname + "/autodiscover/autodiscover.xml")
+    $ewsurl = ("https://" + $ExchHostname + "/EWS/Exchange.asmx")
 
 
     ## Choose to ignore any SSL Warning issues caused by Self Signed Certificates     
@@ -2115,6 +2111,35 @@ function Invoke-DomainHarvestOWA {
     $TrustAll=$TAAssembly.CreateInstance("Local.ToolkitExtensions.Net.CertificatePolicy.TrustAll")
     [System.Net.ServicePointManager]::CertificatePolicy=$TrustAll
 
+
+    ## end code from http://poshcode.org/624    
+    
+    if ($Brute)
+    {
+    $Domains = @()
+
+    if ($DomainList -ne "") {
+        $Domains += Get-Content $DomainList
+    }
+    elseif ($CompanyName -ne "") {
+        
+        #Generate a list of potential domain names based on spacing and mixed capitalization
+        $Domains = Gen-Names -Name $CompanyName
+    }
+    else {
+        Write-Output "You must provide either a DomainList or a CompanyName"
+        return
+    }
+
+    #Generate random 10-character username and password
+    #source: https://blogs.technet.microsoft.com/heyscriptingguy/2015/11/05/generate-random-letters-with-powershell/
+    $Username = -join ((65..90) + (97..122) | Get-Random -Count 10 | % {[char]$_})
+    $Password = -join ((65..90) + (97..122) | Get-Random -Count 10 | % {[char]$_})
+    $sprayed = @()
+    $domainlists = @{}
+    $count = 0 
+
+
     $AvgTime = Get-BaseLineResponseTime -OWAURL $OWAURL -OWAURL2 $OWAURL2
     $Thresh = $AvgTime * 2.75
 
@@ -2122,7 +2147,6 @@ function Invoke-DomainHarvestOWA {
 
     Write-Host "Threshold: $Thresh"
     Write-Host ""
-    ## end code from http://poshcode.org/624
 	Write-Host "Response Time (MS) `t Domain\Username"
     ForEach($Dom in $Domains)
     {
@@ -2151,6 +2175,70 @@ function Invoke-DomainHarvestOWA {
     if ($OutFile -ne "") {
             $fullresults | Out-File -Encoding ascii $OutFile
             Write-Host "Results have been written to $OutFile."
+    }
+    }
+    else
+    {
+    try 
+    {
+        $webrequest = Invoke-WebRequest -Uri $autodiscoverurl -Method Post -Headers @{"Authorization" = "NTLM TlRMTVNTUAABAAAAB4IIogAAAAAAAAAAAAAAAAAAAAAGAbEdAAAADw=="}
+    }
+    catch
+    {
+        $webrequest = $_.Exception.Response
+        If ($webrequest.StatusCode -eq "Unauthorized")
+        {
+            $headers = $webrequest.Headers
+            foreach ($headerkey in $headers)
+            {
+                if ($headerkey -like "WWW-Authenticate")
+                {
+                $wwwheader = $($headers[$headerkey]) -split ',|\s'
+                $base64decoded = [System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String($wwwheader[1]))
+                $commasep = $base64decoded -replace '[^\x21-\x39\x41-\x5A\x61-\x7A]+', ','
+                $ntlmresparray = @()
+                $ntlmresparray = $commasep -split ','
+                Write-Host ("The domain appears to be: " + $ntlmresparray[7])
+                }
+
+            }
+        }
+        else
+        {
+            Write-Output "[*] Couldn't get domain from Autodiscover URL. Trying EWS URL..."
+            try 
+            {
+                $webrequest = Invoke-WebRequest -Uri $ewsurl -Method Post -Headers @{"Authorization" = "NTLM TlRMTVNTUAABAAAAB4IIogAAAAAAAAAAAAAAAAAAAAAGAbEdAAAADw=="}
+            }
+            catch
+            {
+                $webrequest = $_.Exception.Response
+                If ($webrequest.StatusCode -eq "Unauthorized")
+                {
+                    $headers = $webrequest.Headers
+                    foreach ($headerkey in $headers)
+                    {
+                        if ($headerkey -like "WWW-Authenticate")
+                        {
+                        $wwwheader = $($headers[$headerkey]) -split ',|\s'
+                        $base64decoded = [System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String($wwwheader[1]))
+                        $commasep = $base64decoded -replace '[^\x21-\x39\x41-\x5A\x61-\x7A]+', ','
+                        $ntlmresparray = @()
+                        $ntlmresparray = $commasep -split ','
+                        Write-Host ("The domain appears to be: " + $ntlmresparray[7])
+                        }
+
+                    }
+                }
+                else
+                {
+                Write-Output "[*] Couldn't get domain from EWS. Try the timing attack by specifying a list of possible domains and use the -brute option."
+                Write-Output "Here is an example: Invoke-DomainHarvestOWA -ExchHostname $ExchHostname -DomainList .\domainlist.txt -OutFile potentially-valid-domains.txt -Brute"    
+                }
+            }
+        }
+    }
+
     }
 }
 
