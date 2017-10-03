@@ -1632,6 +1632,8 @@ function Invoke-PasswordSprayOWA{
   )
     
     Write-Host -ForegroundColor "yellow" "[*] Now spraying the OWA portal at https://$ExchHostname/owa/"
+    $currenttime = Get-Date
+    Write-Host -ForegroundColor "yellow" "[*] Current date and time: $currenttime"
     #Setting up URL's for later
     $OWAURL = ("https://" + $ExchHostname + "/owa/auth.owa")
     $OWAURL2 = ("https://" + $ExchHostname + "/owa/")
@@ -1837,6 +1839,8 @@ function Invoke-PasswordSprayEWS{
 
   )
     Write-Host -ForegroundColor "yellow" "[*] Now spraying the EWS portal at https://$ExchHostname/EWS/Exchange.asmx"
+    $currenttime = Get-Date
+    Write-Host -ForegroundColor "yellow" "[*] Current date and time: $currenttime"
     #Running the LoadEWSDLL function to load the required Exchange Web Services dll
     $Usernames = Get-Content $UserList
     $count = $Usernames.count
