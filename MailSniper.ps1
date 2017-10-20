@@ -318,7 +318,7 @@ $TASource=@'
   }
   else 
   {
-    $SMTPAddresses = Get-Mailbox -ResultSize unlimited | Select Name -ExpandProperty EmailAddresses
+    $SMTPAddresses = Get-Mailbox -ResultSize unlimited | Select Name -ExpandProperty PrimarySmtpAddress
     $AllMailboxes = $SMTPAddresses -replace ".*:"
     Write-Host "[*] The total number of mailboxes discovered is: " $AllMailboxes.count
   }
