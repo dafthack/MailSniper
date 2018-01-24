@@ -5,7 +5,7 @@ MailSniper also includes additional modules for password spraying, enumerating u
 
 For more information about the primary MailSniper functionality check out this [blog post](http://www.blackhillsinfosec.com/?p=5296).
 
-For more information about additional MailSniper modules check out these blog posts: 
+For more information about additional MailSniper modules check out these blog posts:
 
 - [GAL & Password Spraying](http://www.blackhillsinfosec.com/?p=5330)
 
@@ -51,7 +51,7 @@ EmailList             - A text file listing email addresses to search (one per l
 Folder                - The folder within each mailbox to search. By default the script only searches the "Inbox" folder. By specifying 'all' for the Folder option all of the folders including subfolders of the specified mailbox will be searched.
 Regex                 - The regex parameter allows for the use of regular expressions when doing searches. This will override the -Terms flag.
 CheckAttachments      - If the CheckAttachments option is added MailSniper will attempt to search through the contents of email attachements in addition to the default body/subject. These attachments can be downloaded by specifying the -DownloadDir option. It only searches attachments that are of extension .txt, .htm, .pdf, .ps1, .doc, .xls, .bat, and .msg currently.
-DownloadDir           - When the CheckAttachments option finds attachments that are matches to the search terms the files can be downloaded to a specific location using the -DownloadDir option. 
+DownloadDir           - When the CheckAttachments option finds attachments that are matches to the search terms the files can be downloaded to a specific location using the -DownloadDir option.
 ```
 ### Invoke-SelfSearch Options
 ```
@@ -61,19 +61,19 @@ MailsPerUser          - The total number of emails to return.
 Terms                 - Certain terms to search through each email subject and body for. By default the script searches for "*password*","*creds*","*credentials*".
 OutputCsv             - Outputs the results of the search to a CSV file.
 ExchangeVersion       - Specify the version of Exchange server to connect to. By default the script tries Exchange2010.
-Remote                - A switch for performing the search remotely across the Internet against a system hosting EWS. Instead of utilizing the current user's credentials if the -Remote option is added a new credential box will pop up for accessing the remote EWS service. 
+Remote                - A switch for performing the search remotely across the Internet against a system hosting EWS. Instead of utilizing the current user's credentials if the -Remote option is added a new credential box will pop up for accessing the remote EWS service.
 Folder                - The folder within each mailbox to search. By default the script only searches the "Inbox" folder. By specifying 'all' for the Folder option all of the folders including subfolders of the specified mailbox will be searched.
 Regex                 - The regex parameter allows for the use of regular expressions when doing searches. This will override the -Terms flag.
 CheckAttachments      - If the CheckAttachments option is added MailSniper will attempt to search through the contents of email attachements in addition to the default body/subject. These attachments can be downloaded by specifying the -DownloadDir option. It only searches attachments that are of extension .txt, .htm, .pdf, .ps1, .doc, .xls, .bat, and .msg currently.
-DownloadDir           - When the CheckAttachments option finds attachments that are matches to the search terms the files can be downloaded to a specific location using the -DownloadDir option. 
-OtherUserMailbox      - Specify this flag when attempting to read emails from a different user's mailbox 
+DownloadDir           - When the CheckAttachments option finds attachments that are matches to the search terms the files can be downloaded to a specific location using the -DownloadDir option.
+OtherUserMailbox      - Specify this flag when attempting to read emails from a different user's mailbox
 ```
 ## Additional MailSniper Modules
-**Get-GlobalAddressList** is a module that will first attempt to connect to an Outlook Web Access portal and utilize the "FindPeople" method (only available in Exchange2013 and up) of gathering email addresses from the Global Address List. If this does not succeed the script will attempt to connect to Exchange Web Services where it will attempt to gather the Global Address List. 
+**Get-GlobalAddressList** is a module that will first attempt to connect to an Outlook Web Access portal and utilize the "FindPeople" method (only available in Exchange2013 and up) of gathering email addresses from the Global Address List. If this does not succeed the script will attempt to connect to Exchange Web Services where it will attempt to gather the Global Address List.
 ```PowerShell
 Get-GlobalAddressList -ExchHostname mail.domain.com -UserName domain\username -Password Fall2016 -OutFile global-address-list.txt
 ```
-**Get-MailboxFolders** is a module that will connect to a Microsoft Exchange server using Exchange Web Services to gather a list of folders from the current user's mailbox. 
+**Get-MailboxFolders** is a module that will connect to a Microsoft Exchange server using Exchange Web Services to gather a list of folders from the current user's mailbox.
 ```PowerShell
 Get-MailboxFolders -Mailbox current-user@domain.com
 ```
@@ -85,13 +85,21 @@ Invoke-PasswordSprayOWA -ExchHostname mail.domain.com -UserList .\userlist.txt -
 ```PowerShell
 Invoke-PasswordSprayEWS -ExchHostname mail.domain.com -UserList .\userlist.txt -Password Fall2016 -Threads 15 -OutFile sprayed-ews-creds.txt
 ```
+**Invoke-PasswordSprayGmail** This module will first attempt to connect to a Gmail Authentication portal and perform a password spraying attack using a userlist and a single password. PLEASE BE CAREFUL NOT TO LOCKOUT ACCOUNTS!
+```PowerShell
+Invoke-PasswordSprayGmail -UserList .\userlist.txt -Password Fall2016 -Threads 15 -OutFile gmail-sprayed-creds.txt
+```
 **Invoke-DomainHarvestOWA** is a module that will attempt to connect to an Outlook Web Access portal and determine a valid domain name for logging into the portal from the WWW-Authenticate header returned in a web response from the server or based off of small timing differences in login attempts.
 ```PowerShell
-Invoke-DomainHarvestOWA -ExchHostname mail.domain.com 
+Invoke-DomainHarvestOWA -ExchHostname mail.domain.com
 ```
-**Invoke-UsernameHarvestOWA** is a module that will attempt to connect to an Outlook Web Access portal and harvest valid usernames based off of small timing differences in login attempts.
+**Invoke-UsernameHarvestGmail** is a module that will attempt to enumerate Google Apps user accounts and potentially identify user accounts that opt-out of implemented 2FA solutions.
 ```PowerShell
-Invoke-UsernameHarvestOWA -ExchHostname mail.domain.com -UserList .\userlist.txt -Threads 1 -OutFile owa-valid-users.txt
+Invoke-UsernameHarvestGmail -Account
+Invoke-UsernameHarvestGmail -UserFile .\emails.txt
+Invoke-UsernameHarvestGmail -UserFile .\emails.txt -ProxyHosts 10.0.0.5:8080,10.0.0.6:8080,10.0.0.10:443
+Invoke-UsernameHarvestGmail -UserFile .\emails.txt -Detailed
+Get-Content emails.txt | % { Invoke-UsernameHarvestGmail $_ }
 ```
 **Invoke-OpenInboxFinder** is a module that will attempt to determine if the current user running MailSniper has access to the Inbox of each email address in a list of addresses.
 ```PowerShell
@@ -101,4 +109,3 @@ Invoke-OpenInboxFinder -EmailList email-list.txt
 ```PowerShell
 Get-ADUsernameFromEWS -EmailList email-list.txt
 ```
-
