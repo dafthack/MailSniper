@@ -1316,11 +1316,11 @@ function Get-GlobalAddressList{
 
     [Parameter(Position = 5, Mandatory = $False)]
     [string]
-    $StartRow = "",
+    $StartRow = 0,
 
     [Parameter(Position = 6, Mandatory = $False)]
     [string]
-    $MaxRows = ""
+    $MaxRows = 5000
 
   )
     ## Choose to ignore any SSL Warning issues caused by Self Signed Certificates     
