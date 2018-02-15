@@ -1452,7 +1452,7 @@ function Get-GlobalAddressList{
 
         Write-Output "[*] Now utilizing FindPeople to retrieve Global Address List"
 		
-		# setup variables for use in paging.
+	# setup variables for use in paging.
         $recordsFound = $true
         $start = $StartRow
         $maxRows = $MaxRows
@@ -1465,7 +1465,7 @@ function Get-GlobalAddressList{
             
 			if($FindPeopleResults.RawContent.IndexOf("""ResultSet"":[]") -gt -1)
             {
-				#if no results are returned, we've reached the end and can exit the loop.
+		#if no results are returned, we've reached the end and can exit the loop.
                 $recordsFound = $false
             }
 
