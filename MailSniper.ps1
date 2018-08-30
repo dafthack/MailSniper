@@ -313,7 +313,7 @@ $TASource=@'
   #Get a list of all mailboxes
   if($EmailList -ne "")
   {
-    $AllMailboxes = Get-Content -Path $EmailList
+    $AllMailboxes = @(Get-Content -Path $EmailList)
     Write-Host "[*] The total number of mailboxes discovered is: " $AllMailboxes.count
   }
   else 
@@ -1638,7 +1638,7 @@ function Invoke-PasswordSprayOWA{
     $OWAURL = ("https://" + $ExchHostname + "/owa/auth.owa")
     $OWAURL2 = ("https://" + $ExchHostname + "/owa/")
      
-    $Usernames = Get-Content $UserList
+    $Usernames = @(Get-Content $UserList)
     $count = $Usernames.count
     $sprayed = @()
     $userlists = @{}
@@ -1842,7 +1842,7 @@ function Invoke-PasswordSprayEWS{
     $currenttime = Get-Date
     Write-Host -ForegroundColor "yellow" "[*] Current date and time: $currenttime"
     #Running the LoadEWSDLL function to load the required Exchange Web Services dll
-    $Usernames = Get-Content $UserList
+    $Usernames = @(Get-Content $UserList)
     $count = $Usernames.count
     $sprayed = @()
     $userlists = @{}
@@ -2123,7 +2123,7 @@ function Invoke-DomainHarvestOWA {
     $Domains = @()
 
     if ($DomainList -ne "") {
-        $Domains += Get-Content $DomainList
+        $Domains += @(Get-Content $DomainList)
     }
     elseif ($CompanyName -ne "") {
         
@@ -2331,7 +2331,7 @@ function Invoke-UsernameHarvestOWA {
     $OWAURL2 = ("https://" + $ExchHostname + "/owa/")
     
     $Usernames = @()
-    $Usernames += Get-Content $UserList
+    $Usernames += @(Get-Content $UserList)
     $Users = @()
     $count = $Usernames.count
 
@@ -2752,7 +2752,7 @@ function Invoke-OpenInboxFinder{
 
   If ($EmailList -ne "") 
   {
-    $Mailboxes = Get-Content -Path $EmailList
+    $Mailboxes = @(Get-Content -Path $EmailList)
     $Mailbox = $Mailboxes[0]
   } 
   elseif ($Mailbox -ne "")
@@ -3072,7 +3072,7 @@ function Get-ADUsernameFromEWS{
 
   If ($EmailList -ne "") 
   {
-    $Emails = Get-Content -Path $EmailList
+    $Emails = @(Get-Content -Path $EmailList)
     $EmailAddress = $Emails[0]
   } 
   elseif ($Emails -ne "")
