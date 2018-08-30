@@ -1504,7 +1504,24 @@ function Invoke-SelfSearch{
   else
   {
     ("[*] Autodiscovering email server for " + $Mailbox + "...")
-    $service.AutoDiscoverUrl($Mailbox, {$true})
+    try
+    {
+      $service.AutoDiscoverUrl($Mailbox, {$true})
+    }
+    catch [System.Management.Automation.MethodInvocationException]
+    {
+      $e = $_.Exception.InnerException
+      if ($e.GetType().Name -eq "AutodiscoverRemoteException")
+      {
+        [Microsoft.Exchange.WebServices.autodiscover.AutodiscoverRemoteException]$e = $e
+        # AutodiscoverRemoteException has an Error property which describes the error returned by the AutoDiscover service
+        # https://msdn.microsoft.com/en-us/library/microsoft.exchange.webservices.autodiscover.autodiscoverremoteexception.error%28v=exchg.80%29.aspx?f=255&MSPPError=-2147217396
+        Write-Output ("[!] AutodiscoverRemoteException: '" + $e.Error.Message + "'")
+        break
+      }
+      # Unfortunately, the other exception case, AutodiscoverLocalException does not have the Error property
+      # Therefore we do not have any interesting info to display
+    }
   }    
 
     if($OtherUserMailbox)
@@ -1851,7 +1868,7 @@ function Get-MailboxFolders{
   .PARAMETER Remote
 
     A switch for performing the search remotely across the Internet against a system hosting EWS. Instead of utilizing the current user's credentials if the -Remote option is added a new credential box will pop up for accessing the remote EWS service. 
-    
+  
   .PARAMETER UsePrt
 
     Uses current user's PRT to authenticate.
@@ -3621,7 +3638,24 @@ function Invoke-OpenInboxFinder{
   else
   {
     ("[*] Autodiscovering email server for " + $Mailbox + "...")
-    $service.AutoDiscoverUrl($Mailbox, {$true})
+    try
+    {
+      $service.AutoDiscoverUrl($Mailbox, {$true})
+    }
+    catch [System.Management.Automation.MethodInvocationException]
+    {
+      $e = $_.Exception.InnerException
+      if ($e.GetType().Name -eq "AutodiscoverRemoteException")
+      {
+        [Microsoft.Exchange.WebServices.autodiscover.AutodiscoverRemoteException]$e = $e
+        # AutodiscoverRemoteException has an Error property which describes the error returned by the AutoDiscover service
+        # https://msdn.microsoft.com/en-us/library/microsoft.exchange.webservices.autodiscover.autodiscoverremoteexception.error%28v=exchg.80%29.aspx?f=255&MSPPError=-2147217396
+        Write-Output ("[!] AutodiscoverRemoteException: '" + $e.Error.Message + "'")
+        break
+      }
+      # Unfortunately, the other exception case, AutodiscoverLocalException does not have the Error property
+      # Therefore we do not have any interesting info to display
+    }
   }    
     
     try
