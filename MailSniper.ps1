@@ -1341,6 +1341,9 @@ function Get-GlobalAddressList{
 
     ## end code from http://poshcode.org/624
     $ErrorActionPreference = "Stop"
+    
+    ## Enforce TLS 1.2 to avoid SSL/TLS errors in the next Invoke-WebRequest calls
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
     try
     {
