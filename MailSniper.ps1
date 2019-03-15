@@ -2199,10 +2199,10 @@ function Invoke-DomainHarvestOWA {
                 {
                 $wwwheader = $($headers[$headerkey]) -split ',|\s'
                 $base64decoded = [System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String($wwwheader[1]))
-                $commasep = $base64decoded -replace '[^\x21-\x39\x41-\x5A\x61-\x7A]+', ','
+                $commasep = $base64decoded -replace '[^\x21-\x39\x41-\x5A\x61-\x7A\x5F]+', ','
                 $ntlmresparray = @()
                 $ntlmresparray = $commasep -split ','
-                Write-Host ("The domain appears to be: " + $ntlmresparray[7])
+                Write-Host ("The domain appears to be: " + $ntlmresparray[4] + " or " +$ntlmresparray[7])
                 }
 
             }
@@ -2226,10 +2226,10 @@ function Invoke-DomainHarvestOWA {
                         {
                         $wwwheader = $($headers[$headerkey]) -split ',|\s'
                         $base64decoded = [System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String($wwwheader[1]))
-                        $commasep = $base64decoded -replace '[^\x21-\x39\x41-\x5A\x61-\x7A]+', ','
+                        $commasep = $base64decoded -replace '[^\x21-\x39\x41-\x5A\x61-\x7A\x5F]+', ','
                         $ntlmresparray = @()
                         $ntlmresparray = $commasep -split ','
-                        Write-Host ("The domain appears to be: " + $ntlmresparray[7])
+                        Write-Host ("The domain appears to be: " + $ntlmresparray[4] + " or " +$ntlmresparray[7])
                         }
 
                     }
