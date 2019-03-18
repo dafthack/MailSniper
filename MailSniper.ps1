@@ -1273,7 +1273,11 @@ function Get-GlobalAddressList{
 
         Password of the email account.
 
-  
+    .PARAMETER MaxLevels
+    
+        Maximum levels to search. Because ResolveName only returns a maximum of 100 results, its possible the the list of emails addresses is incomplete. If > 100 results are returned, the query is split down another level. For example if the query for 'SP' returns > 100 results, add 'SPA' - 'SPZ' to the list of combinations to try. If 'SPL' then returns > 100 results, add 'SPLA' - 'SPLZ' to the combinations to try.
+
+
   .EXAMPLE
 
     C:\PS> Get-GlobalAddressList -ExchHostname mail.domain.com -UserName domain\username -Password Fall2016 -OutFile global-address-list.txt
@@ -1304,7 +1308,11 @@ function Get-GlobalAddressList{
 
     [Parameter(Position = 4, Mandatory = $False)]
     [string]
-    $Password = ""
+    $Password = "",
+
+    [Parameter(Position = 5, Mandatory = $False)]
+    [string]
+    $MaxLevels = 2
 
   )
     ## Choose to ignore any SSL Warning issues caused by Self Signed Certificates     
@@ -1516,31 +1524,59 @@ function Get-GlobalAddressList{
             }
         }
   
-        #Creating an array of letters A through Z
-        $AtoZ = @()
-        65..90 | foreach-object{$AtoZ+=[char]$_}
-        $lettercombinations = @()
-  
-        #Creating an array of two letter variables AA to ZZ
-        Foreach ($letter in $AtoZ)
-        {
-            $AtoZ | foreach-object{$lettercombinations += ($letter + $_)}
-        }
+        #Create one level of queries. lettercombinations is basically a queue of queries to run
+        [System.Collections.ArrayList]$lettercombinations=@()
 
+        for ($s = 65; $s -le 90; $s++)
+        {
+            [void]$lettercombinations.add([char]$s)  
+        }      
+               
+          
         Write-Output "[*] Now attempting to gather the Global Address List. This might take a while...`r`n"
-
-        #The ResolveName function only will return a max of 100 results from the Global Address List. So we search two letter combinations to try and retrieve as many as possible.
         $GlobalAddressList = @()
-        foreach($combo in $lettercombinations)
-        {
-            $galresults = $service.ResolveName($combo)
-            foreach($item in $galresults)
-            {
-                Write-Output $item.Mailbox.Address
-                $GlobalAddressList += $item.Mailbox
-            }
 
+        $maxlevelwarning=$False
+        
+        while ($lettercombinations.count -gt 0 -and $lettercombinations.item(0).length -le $MaxLevels) 
+        {
+
+            for ($i = 0; $i -lt $lettercombinations.Count; $i++)
+            {
+                $combo=$lettercombinations.item(0)
+                $galresults = $service.ResolveName($combo)
+
+                
+                if ($galresults.count -ge 100 -and $combo.Length -lt $MaxLevels) # If 100 results are returned, we're probably missing addresses. Let's forget this combo and add another level to $lettercombinations
+                {   
+                
+                    for ($a = 65; $a -le 90; $a++)
+                    {                    
+                        [void]$lettercombinations.add($combo+[char]$a)                       
+                    }                 
+                } else 
+                {
+                    if ($galresults.Count -ge 100) 
+                    {
+                        $maxlevelwarning=$True
+                    }
+
+                
+                    foreach($item in $galresults)
+                    {
+                        
+                        Write-Output $item.Mailbox.Address 
+                        $GlobalAddressList += $item.Mailbox
+                    }
+                }
+
+                $lettercombinations.RemoveAt(0)
+                
+           }
         }
+                
+        if ($maxlevelwarning -eq $True) {Write-Host -ForegroundColor "red" "[*] Consider using -MaxLevels $([int]$combo.length+1) parameter to avoid missing addresses."}
+    
         Write-Output "[*] Now cleaning up the list..."
         $GlobalAddressList = $GlobalAddressList | Sort-Object | Get-Unique
         Write-Output ("A total of " + $GlobalAddressList.count + " email addresses were retrieved")
