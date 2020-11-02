@@ -36,6 +36,8 @@ Invoke-SelfSearch -Mailbox current-user@domain.com
 
 This command will connect to the Exchange server autodiscovered from the email address entered using Exchange Web Services where by default 100 of the latest emails from the "Mailbox" will be searched through for the terms "\*pass\*","\*creds\*","\*credentials\*".
 
+**Invoke-GlobalO365MailSearch** same as Invoke-GlobalMailSearch, with support for SSO based authentication to O365.
+
 ### Invoke-GlobalMailSearch Options
 ```
 ImpersonationAccount  - This user will be granted the ApplicationImpersonation role on the Exchange server.
@@ -67,6 +69,15 @@ Regex                 - The regex parameter allows for the use of regular expres
 CheckAttachments      - If the CheckAttachments option is added MailSniper will attempt to search through the contents of email attachements in addition to the default body/subject. These attachments can be downloaded by specifying the -DownloadDir option. It only searches attachments that are of extension .txt, .htm, .pdf, .ps1, .doc, .xls, .bat, and .msg currently.
 DownloadDir           - When the CheckAttachments option finds attachments that are matches to the search terms the files can be downloaded to a specific location using the -DownloadDir option. 
 OtherUserMailbox      - Specify this flag when attempting to read emails from a different user's mailbox 
+UsePrt                - Uses current user's PRT to authenticate.
+AccessToken           - Use provided oauth access token to authenticate.
+```
+### Invoke-GlobalO365MailSearch Options
+```
+UsePrtImperonsationAccount      -   Uses current user's PRT to to authenticate ImperonsationAccount.
+AccessTokenImpersonationAccount -   Use provided oauth access token to authenticate ImperonsationAccount.
+UsePrtAdminAccount              -   Uses current user's PRT to to authenticate AdminAccount.
+AccessTokenAdminAccount         -   Use provided oauth access token to authenticate ImperonsationAccount.
 ```
 ## Additional MailSniper Modules
 **Get-GlobalAddressList** is a module that will first attempt to connect to an Outlook Web Access portal and utilize the "FindPeople" method (only available in Exchange2013 and up) of gathering email addresses from the Global Address List. If this does not succeed the script will attempt to connect to Exchange Web Services where it will attempt to gather the Global Address List. 
