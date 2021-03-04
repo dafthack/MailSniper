@@ -123,7 +123,7 @@ function Get-AccessTokenWithPRT {
     [Parameter(Mandatory = $True)]
     [String]$ClientId,
     [Parameter(Mandatory = $False)]
-    [String]$RedirectUri = [System.Web.HttpUtility]::UrlEncode("urn:ietf:wg:oauth:2.0:oob")
+    [String]$RedirectUri = "urn:ietf:wg:oauth:2.0:oob"
   )
   Process {
     # get proof of possesion cookies
@@ -180,7 +180,7 @@ function Get-AccessTokenWithPRT {
       client_id    = $ClientId
       grant_type   = "authorization_code"
       code         = $Code
-      redirect_uri = [System.Web.HttpUtility]::UrlDecode($RedirectUri)
+      redirect_uri = $RedirectUri
     }
 
     # Make the second request to get the access token
