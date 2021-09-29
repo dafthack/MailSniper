@@ -583,6 +583,7 @@ namespace Local.ToolkitExtensions.Net.CertificatePolicy {
           Write-Output "[*] Some options to try: Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1."
           break
         }
+	else{Write-Verbose $ErrorMessage}
       }
 
 
@@ -1090,6 +1091,7 @@ $TASource=@'
           Write-Output "[*] Some options to try: Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1."
           break
         }
+	else{Write-Verbose $ErrorMessage}
       }
 
 
@@ -1697,6 +1699,7 @@ function Invoke-SelfSearch{
           Write-Output "[*] Some options to try: Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1."
           break
         }
+        else{Write-Verbose $ErrorMessage}
       }
      
       $PropertySet = New-Object Microsoft.Exchange.WebServices.Data.PropertySet([Microsoft.Exchange.WebServices.Data.BasePropertySet]::FirstClassProperties)
@@ -2303,6 +2306,7 @@ function Get-GlobalAddressList{
                 Write-Output "[*] Some options to try: Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1."
                 break
             }
+	    else{Write-Verbose $ErrorMessage}
         }
   
         #Creating an array of letters A through Z
@@ -2491,6 +2495,7 @@ function Invoke-PasswordSprayOWA{
 	$form = $owa.Forms[0]
 	$form.fields.password=$Password
 	$form.fields.username=$Username
+	[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         $owalogin = Invoke-WebRequest -Uri $OWAURL -Method POST -Body  $form.Fields -MaximumRedirection 2 -SessionVariable sess -ErrorAction SilentlyContinue 
         #Check cookie in response
         $cookies = $sess.Cookies.GetCookies($OWAURL2)
@@ -2720,19 +2725,21 @@ function Invoke-PasswordSprayEWS{
                 $FolderId = New-Object Microsoft.Exchange.WebServices.Data.FolderId( $rootfolder, $mbx)   
                 try
                 {
+		    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
                     $Inbox = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,$FolderId) 
                     Write-Output "[*] SUCCESS! User:$username Password:$Password"
                 }
                 catch
                 {
                     $ErrorMessage = $_.Exception.Message
-                    if ($ErrorMessage -like "*Exchange Server doesn't support the requested version.*")
+		    if ($ErrorMessage -like "*Exchange Server doesn't support the requested version.*")
                     {
                         Write-Output "[*] ERROR: The connection to Exchange failed using Exchange Version $ExchangeVersion."
                         Write-Output "[*] Try setting the -ExchangeVersion flag to the Exchange version of the server."
                         Write-Output "[*] Some options to try: Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1."
                         break
                     }
+		    else{Write-Verbose $ErrorMessage}
                 }   
    
 
@@ -3776,6 +3783,7 @@ function Invoke-OpenInboxFinder{
         catch
       {
         $ErrorMessage = $_.Exception.Message
+	Write-Verbose $ErrorMessage
         continue
         
       }
@@ -4993,6 +5001,7 @@ function Invoke-PasswordSprayEAS{
         
       try
 	  {
+	[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         $easlogin = Invoke-WebRequest -Uri $EASURL -Headers $Headers -Method Get -SessionVariable sess -ErrorAction Stop
       }
       catch
