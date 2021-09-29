@@ -326,7 +326,7 @@ function Invoke-GlobalO365MailSearch {
 
   When the CheckAttachments option finds attachments that are matches to the search terms the files can be downloaded to a specific location using the -DownloadDir option. 
 
-.PARAMETER UsePrtImperonsationAccount
+.PARAMETER UsePrtImpersonationAccount
 
   Uses current user's PRT to to authenticate ImperonsationAccount.
 
@@ -342,7 +342,7 @@ function Invoke-GlobalO365MailSearch {
 
 .EXAMPLE
 
- Invoke-GlobalO365MailSearch -ImpersonationAccount "victim@victims.com" -UsePrtImperonsationAccount -ExchHostname outlook.office365.com -AdminUserName "admin-victim@victims.com" -UsePrtAdminAccount
+ Invoke-GlobalO365MailSearch -ImpersonationAccount "victim@victims.com" -UsePrtImpersonationAccount -ExchHostname outlook.office365.com -AdminUserName "admin-victim@victims.com" -UsePrtAdminAccount
 #>
 
 
@@ -405,7 +405,7 @@ function Invoke-GlobalO365MailSearch {
 
     [Parameter(Position = 14, Mandatory = $False)]
     [switch]
-    $UsePrtImperonsationAccount,
+    $UsePrtImpersonationAccount,
 
     [Parameter(Position = 15, Mandatory = $False)]
     [string]
@@ -517,7 +517,7 @@ namespace Local.ToolkitExtensions.Net.CertificatePolicy {
 
   # Impersonation account credential
   $Token = "" 
-  if ($UsePrtImperonsationAccount) {
+  if ($UsePrtImpersonationAccount) {
     $Token = $(Get-ExchangeAccessToken -AccountName $ImpersonationAccount).access_token
   }
   else {
