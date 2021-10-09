@@ -1289,7 +1289,7 @@ function Send-EWSEmail {
 
   .PARAMETER emailBody
 
-  Body of the email. May be in HTML format.
+  Body of the email. Maybe in HTML format.
 
   .PARAMETER Attachment
 
@@ -1312,7 +1312,7 @@ function Send-EWSEmail {
 
   Description
   -----------
-  This command will connect to office365 via EWS API to send email messages.
+  This command will connect to Office365 via EWS API to send email messages.
 
   .EXAMPLE
 
@@ -1320,7 +1320,7 @@ function Send-EWSEmail {
 
   Description
   -----------
-  This command will connect to office365 via Substrate EWS API to send email messages.
+  This command will connect to Office365 via Substrate EWS API to send email messages.
 
   #>
   [CmdletBinding()]
@@ -1379,7 +1379,7 @@ function Send-EWSEmail {
     }
     elseif ($UsePrt) 
     {
-      #Get oauth access token with EWS permissions via office native app
+      #Get OAuth access token with EWS permissions via Office native app
       $token = $(Get-ExchangeAccessToken -AccountName $Mailbox).access_token
       $service.Credentials = [Microsoft.Exchange.WebServices.Data.OAuthCredentials]$token
     }
