@@ -112,3 +112,7 @@ Invoke-OpenInboxFinder -EmailList email-list.txt
 ```PowerShell
 Get-ADUsernameFromEWS -EmailList email-list.txt
 ```
+**Send-EWSEmail** will attempt to connect to EWS and send an email.
+```PowerShell
+Send-EWSEmail --ExchHostname substrate.office.com -Recipient $targetEmail -Subject "Foo" -EmailBody "Bar" -AccessToken $Accesstoken
+```

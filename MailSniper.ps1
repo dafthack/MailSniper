@@ -1254,6 +1254,189 @@ $TASource=@'
 
 }
 
+function Send-EWSEmail {
+  
+  <#
+  .SYNOPSIS
+
+  This module will connect to a Microsoft Exchange server using Exchange Web Services to send emails from the current user's mailbox.
+
+  MailSniper Function: Send-EWSEmail
+  Author: Steve Borosh (@424f424f)
+  License: BSD 3-Clause
+  Required Dependencies: LoadEWSDLL 
+  Optional Dependencies: None
+
+  .DESCRIPTION
+
+  This module will connect to a Microsoft Exchange server using Exchange Web Services to send emails.
+
+  .PARAMETER ExchHostname
+
+  The hostname of the Exchange server to connect to.
+
+  .PARAMETER ExchangeVersion
+
+  In order to communicate with Exchange Web Services the correct version of Microsoft Exchange Server must be specified. By default this script tries "Exchange2010". Additional options to try are  Exchange2007_SP1, Exchange2010, Exchange2010_SP1, Exchange2010_SP2, Exchange2013, or Exchange2013_SP1.
+
+  .PARAMETER Recipient
+
+  Email address of the recipient who will receive the email.
+
+  .PARAMETER Subject
+
+  Subject of the email.
+
+  .PARAMETER emailBody
+
+  Body of the email. May be in HTML format.
+
+  .PARAMETER Attachment
+
+  Path to an attachment file.
+
+  .PARAMETER UsePrt
+
+  Uses current user's PRT to authenticate.
+
+  .PARAMETER AccessToken
+  Use provided oauth access token to authenticate.   
+
+  .PARAMETER Remote
+
+  A switch accessing remotely across the Internet against a system hosting EWS. Instead of utilizing the current user's credentials if the -Remote option is added a new credential box will pop up for accessing the remote EWS service.  
+
+  .EXAMPLE
+
+  C:\PS> Send-EWSEmail -ServiceURL "https://outlook.office365.com/EWS/Exchange.asmx" -Recipient "me@me.com" -Subject "Important Message!" -EmailBody "All, <br> Check out the attachment." -Attachment .\WordDocument.rtf
+
+  Description
+  -----------
+  This command will connect to office365 via EWS API to send email messages.
+
+  .EXAMPLE
+
+  C:\PS> Send-EWSEmail -ServiceURL "https://substrate.office.com/EWS/Exchange.asmx" -Recipient "me@me.com" -Subject "Important Message!" -EmailBody "All, <br> Check out the attachment." -Attachment .\WordDocument.rtf
+
+  Description
+  -----------
+  This command will connect to office365 via Substrate EWS API to send email messages.
+
+  #>
+  [CmdletBinding()]
+  Param(
+      [Parameter(Mandatory = $True)]
+      [String]
+      $ExchHostname,
+
+      [Parameter(Mandatory = $False)]
+      [String]
+      $ExchangeVersion = "Exchange2010",
+
+      [Parameter(Mandatory = $True)]
+      [String]
+      $Recipient,
+
+      [Parameter(Mandatory = $True)]
+      [String]
+      $Subject,
+
+      [Parameter(Mandatory = $True)]
+      [String]
+      $EmailBody,
+
+      [Parameter(Mandatory = $False)]
+      [String]
+      $Attachment,
+
+      [Parameter(Mandatory = $False)]
+      [String]
+      $UsePrt,
+
+      [Parameter(Mandatory = $False)]
+      [String]
+      $AccessToken,
+
+      [Parameter(Mandatory = $False)]
+      [switch]
+      $Remote
+
+  )
+  try 
+  {
+
+
+    LoadEWSDLL
+    $ServiceExchangeVersion = [Microsoft.Exchange.WebServices.Data.ExchangeVersion]::$ExchangeVersion
+    $service = New-Object Microsoft.Exchange.WebServices.Data.ExchangeService($ServiceExchangeVersion)
+
+    #If the -Remote flag was passed prompt for the user's domain credentials.
+    if ($Remote)
+    {
+      $remotecred = Get-Credential
+      $service.UseDefaultCredentials = $false
+      $service.Credentials = $remotecred.GetNetworkCredential()
+    }
+    elseif ($UsePrt) 
+    {
+      #Get oauth access token with EWS permissions via office native app
+      $token = $(Get-ExchangeAccessToken -AccountName $Mailbox).access_token
+      $service.Credentials = [Microsoft.Exchange.WebServices.Data.OAuthCredentials]$token
+    }
+    elseif ($AccessToken)
+    {
+      $service.Credentials = [Microsoft.Exchange.WebServices.Data.OAuthCredentials]$AccessToken
+    }
+    else
+    {
+      #Using current user's credentials to connect to EWS
+      $service.UseDefaultCredentials = $true
+    }
+    if ($ExchHostname -ne "")
+    {
+        ("[*] Using EWS URL " + "https://" + $ExchHostname + "/EWS/Exchange.asmx")
+        $service.Url = new-object System.Uri(("https://" + $ExchHostname + "/EWS/Exchange.asmx"))
+    }
+    else
+    {
+        ("[*] Autodiscovering email server for " + $Mailbox + "...")
+        try
+        {
+            $service.AutoDiscoverUrl($Mailbox, {$true})
+        }
+        catch [System.Management.Automation.MethodInvocationException]
+        {
+            $e = $_.Exception.InnerException
+            if ($e.GetType().Name -eq "AutodiscoverRemoteException")
+            {
+                [Microsoft.Exchange.WebServices.autodiscover.AutodiscoverRemoteException]$e = $e
+                # AutodiscoverRemoteException has an Error property which describes the error returned by the AutoDiscover service
+                # https://msdn.microsoft.com/en-us/library/microsoft.exchange.webservices.autodiscover.autodiscoverremoteexception.error%28v=exchg.80%29.aspx?f=255&MSPPError=-2147217396
+                Write-Output ("[!] AutodiscoverRemoteException: '" + $e.Error.Message + "'")
+                break
+            }
+        # Unfortunately, the other exception case, AutodiscoverLocalException does not have the Error property
+        # Therefore we do not have any interesting info to display
+        }
+    }
+    # Create Email Object
+    $newMail = New-Object -TypeName Microsoft.Exchange.WebServices.Data.EmailMessage -ArgumentList $service
+    $newMail.Subject = $Subject
+    $newMail.Body = $EmailBody
+    $newMail.ToRecipients.Add($Recipient) | Out-Null
+    if ($Attachment) {
+      # Attach File
+      $newMail.Attachments.AddFileAttachment($Attachment) | Out-Null
+    }
+    # Send email
+    $newMail.Send()
+    Write-Output "Finished!"
+  }
+  catch {
+      Write-Warning $Error[0]
+  }
+}
+
 function Invoke-SelfSearch{
 
 <#
