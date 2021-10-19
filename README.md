@@ -5,7 +5,7 @@ MailSniper also includes additional modules for password spraying, enumerating u
 
 For more information about the primary MailSniper functionality check out [blog post](http://www.blackhillsinfosec.com/?p=5296).
 
-For more information about additional MailSniper modules check out: 
+For more information about additional MailSniper modules check out:
 
 - [GAL & Password Spraying](http://www.blackhillsinfosec.com/?p=5330)
 
@@ -63,12 +63,12 @@ MailsPerUser          - Number of emails to return.
 Terms                 - Specific search terms used to search through each email subject and body. By default, the script searches for "*password*","*creds*","*credentials*".
 OutputCsv             - Outputs the results of the search to a CSV file.
 ExchangeVersion       - Specify the version of Exchange server to connect to (default Exchange2010).
-Remote                - A new credential box will pop up for accessing a remote EWS service from the internet. 
+Remote                - A new credential box will pop up for accessing a remote EWS service from the internet.
 Folder                - A specific folder within each mailbox to search. By default, the script only searches the "Inbox" folder. By specifying 'all', all folders and subfolders will be searched.
 Regex                 - Use a regular expressions when performing searches. This will override the -Terms flag.
 CheckAttachments      - Attempts to search through the contents of email attachements in addition to the default body and subject. These attachments can be downloaded by specifying the -DownloadDir option. Searches for the following extensions: .bat, .htm, .msg, .pdf, .txt, .ps1, .doc and .xls.
 DownloadDir           - Download files to a specific location.
-OtherUserMailbox      - Use this flag when attempting to read emails from a different user's mailbox 
+OtherUserMailbox      - Use this flag when attempting to read emails from a different user's mailbox
 UsePrt                - Uses the current user's PRT to authenticate.
 AccessToken           - Use provided oauth access token to authenticate.
 ```
@@ -80,11 +80,11 @@ UsePrtAdminAccount               - Uses the current user's PRT to authenticate A
 AccessTokenAdminAccount          - Use provided oauth access token to authenticate ImperonsationAccount.
 ```
 ## Additional MailSniper Modules
-**Get-GlobalAddressList** will attempt to connect to an Outlook Web Access (OWA) portal and utilize the "FindPeople" method (only available in Exchange2013 and up) of gathering email addresses from the GAL. If this does not succeed the script will attempt to connect to EWS and attempt to gather the GAL. 
+**Get-GlobalAddressList** will attempt to connect to an Outlook Web Access (OWA) portal and utilize the "FindPeople" method (only available in Exchange2013 and up) of gathering email addresses from the GAL. If this does not succeed the script will attempt to connect to EWS and attempt to gather the GAL.
 ```PowerShell
 Get-GlobalAddressList -ExchHostname mail.domain.com -UserName domain\username -Password Spring2021 -OutFile gal.txt
 ```
-**Get-MailboxFolders** will connect to a Microsoft Exchange server using EWS and gather a list of folders from the current user's mailbox. 
+**Get-MailboxFolders** will connect to a Microsoft Exchange server using EWS and gather a list of folders from the current user's mailbox.
 ```PowerShell
 Get-MailboxFolders -Mailbox current-user@domain.com
 ```
@@ -96,13 +96,25 @@ Invoke-PasswordSprayOWA -ExchHostname mail.domain.com -UserList .\userlist.txt -
 ```PowerShell
 Invoke-PasswordSprayEWS -ExchHostname mail.domain.com -UserList .\userlist.txt -Password Spring2021 -Threads 15 -OutFile sprayed-ews-creds.txt
 ```
+**Invoke-PasswordSprayGmail** This module will first attempt to connect to a Gmail Authentication portal and perform a password spraying attack using a userlist and a single password.
+```PowerShell
+Invoke-PasswordSprayGmail -UserList .\userlist.txt -Password Fall2016 -Threads 15 -OutFile gmail-sprayed-creds.txt
+```
 **Invoke-DomainHarvestOWA** will attempt to connect to an OWA portal and determine a valid domain name for logging into the portal from the WWW-Authenticate header returned in a web response from the server or based off of small timing differences in login attempts.
 ```PowerShell
-Invoke-DomainHarvestOWA -ExchHostname mail.domain.com 
+Invoke-DomainHarvestOWA -ExchHostname mail.domain.com
 ```
 **Invoke-UsernameHarvestOWA** will attempt to connect to an OWA portal and harvest valid usernames based off of small timing differences in login attempts.
 ```PowerShell
 Invoke-UsernameHarvestOWA -ExchHostname mail.domain.com -UserList .\userlist.txt -Threads 1 -OutFile owa-valid-users.txt
+```
+**Invoke-UsernameHarvestGmail** is a module that will attempt to enumerate Google Apps user accounts and potentially identify user accounts that opt-out of implemented 2FA solutions.
+```PowerShell
+Invoke-UsernameHarvestGmail -Account
+Invoke-UsernameHarvestGmail -UserFile .\emails.txt
+Invoke-UsernameHarvestGmail -UserFile .\emails.txt -ProxyHosts 10.0.0.5:8080,10.0.0.6:8080,10.0.0.10:443
+Invoke-UsernameHarvestGmail -UserFile .\emails.txt -Detailed
+Get-Content emails.txt | % { Invoke-UsernameHarvestGmail $_ }
 ```
 **Invoke-OpenInboxFinder** will attempt to determine if the current user has access to the Inbox of each email address in a list of addresses.
 ```PowerShell
