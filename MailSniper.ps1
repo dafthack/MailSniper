@@ -1,5 +1,5 @@
 #  Global TLS Setting for all functions. If TLS12 isn't suppported you will get an exception when using the -Verbose parameter.
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Ssl3 -bor [Net.SecurityProtocolType]::Ssl2 -bor [Net.SecurityProtocolType]::Tls -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls12
 
 function Get-UserPRTToken {
   <#
@@ -2916,6 +2916,11 @@ function Invoke-PasswordSprayEWS{
                 catch
                 {
                     $ErrorMessage = $_.Exception.Message
+		    
+		    if ($ErrorMessage -like "*SMTP*")
+                    {
+                        Write-Output "[*] SUCCESS! User:$username Password:$Password, but unfortunately no valid mailbox!"
+                    }
 		    if ($ErrorMessage -like "*Exchange Server doesn't support the requested version.*")
                     {
                         Write-Output "[*] ERROR: The connection to Exchange failed using Exchange Version $ExchangeVersion."
