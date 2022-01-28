@@ -2916,6 +2916,11 @@ function Invoke-PasswordSprayEWS{
                 catch
                 {
                     $ErrorMessage = $_.Exception.Message
+		    
+		    if ($ErrorMessage -like "*SMTP*")
+                    {
+                        Write-Output "[*] SUCCESS! User:$username Password:$Password, but unfortunately no valid mailbox!"
+                    }
 		    if ($ErrorMessage -like "*Exchange Server doesn't support the requested version.*")
                     {
                         Write-Output "[*] ERROR: The connection to Exchange failed using Exchange Version $ExchangeVersion."
