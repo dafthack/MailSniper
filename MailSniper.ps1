@@ -361,7 +361,7 @@ function Invoke-GlobalO365MailSearch {
 
     [Parameter(Position = 2, Mandatory = $false)]
     [system.URI]
-    $ExchHostname = "outlook.ofiice365.com",
+    $ExchHostname = "outlook.office365.com",
 
     [Parameter(Position = 3, Mandatory = $True)]
     [string]
