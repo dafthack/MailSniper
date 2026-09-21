@@ -47,12 +47,12 @@ MailsPerUser          - The total number of emails returned from each mailbox.
 Terms                 - Specific search terms used to search through each email subject and body. By default, the script searches for "*password*","*creds*","*credentials*".
 OutputCsv             - Outputs the results of the search to a CSV file.
 ExchangeVersion       - Specify the version of Exchange server to connect to. By default the script tries Exchange2010.
-AdminUserName         - The username of an Exchange administator (i.e. member of the "Exchange Organization Administrators" or "Organization Management" group) including the domain (i.e. domain\adminusername).
-AdminPassword         - The password to the Exchange administator (i.e. member of the "Exchange Organization Administrators" or "Organization Management" group) account specified with AdminUserName.
+AdminUserName         - The username of an Exchange administrator (i.e. member of the "Exchange Organization Administrators" or "Organization Management" group) including the domain (i.e. domain\adminusername).
+AdminPassword         - The password to the Exchange administrator (i.e. member of the "Exchange Organization Administrators" or "Organization Management" group) account specified with AdminUserName.
 EmailList             - A text file listing email addresses to search (one per line).
 Folder                - A specific folder within each mailbox to search. By default, the script only searches the "Inbox" folder. By specifying 'all', all folders and subfolders will be searched.
 Regex                 - Use a regular expressions when performing searches. This will override the -Terms flag.
-CheckAttachments      - Attempts to search through the contents of email attachements in addition to the default body and subject. These attachments can be downloaded by specifying the -DownloadDir option. Searches for the following extensions: .bat, .htm, .msg, .pdf, .txt, .ps1, .doc and .xls.
+CheckAttachments      - Attempts to search through the contents of email attachments in addition to the default body and subject. These attachments can be downloaded by specifying the -DownloadDir option. Searches for the following extensions: .bat, .htm, .msg, .pdf, .txt, .ps1, .doc and .xls.
 DownloadDir           - Download files to a specific location.
 ```
 ### Invoke-SelfSearch Options
@@ -66,7 +66,7 @@ ExchangeVersion       - Specify the version of Exchange server to connect to (de
 Remote                - A new credential box will pop up for accessing a remote EWS service from the internet.
 Folder                - A specific folder within each mailbox to search. By default, the script only searches the "Inbox" folder. By specifying 'all', all folders and subfolders will be searched.
 Regex                 - Use a regular expressions when performing searches. This will override the -Terms flag.
-CheckAttachments      - Attempts to search through the contents of email attachements in addition to the default body and subject. These attachments can be downloaded by specifying the -DownloadDir option. Searches for the following extensions: .bat, .htm, .msg, .pdf, .txt, .ps1, .doc and .xls.
+CheckAttachments      - Attempts to search through the contents of email attachments in addition to the default body and subject. These attachments can be downloaded by specifying the -DownloadDir option. Searches for the following extensions: .bat, .htm, .msg, .pdf, .txt, .ps1, .doc and .xls.
 DownloadDir           - Download files to a specific location.
 OtherUserMailbox      - Use this flag when attempting to read emails from a different user's mailbox
 UsePrt                - Uses the current user's PRT to authenticate.
